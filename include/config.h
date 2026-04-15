@@ -33,6 +33,8 @@
 #define PIN_ENC_BTN 4
 #define PIN_BTN_LEFT 5
 #define PIN_BTN_RIGHT 6
+#define PIN_BTN_TOP 7
+#define PIN_BUZZER 9
 
 // ===== GPS =====
 #define GPS_BAUD 9600
@@ -46,3 +48,20 @@
 // ===== Age Calculation =====
 #define MAX_AGE_MS 1000000UL  // Max milliseconds before clamping to 9999
 #define MAX_AGE_DISPLAY 9999   // Max value to display
+
+// ===== Display Modes =====
+#define MODE_UTC_ONLY 0
+#define MODE_UTC_LOCAL 1
+#define MODE_TIMESTAMP_REVIEW 2
+#define MODE_STOPWATCH 3
+#define MODE_TIMER 4
+#define MODE_LOCAL_ONLY 5
+#define NUM_MODES 6
+
+// ===== Mode Names =====
+#define MODE_NAME_0 "UTC Only"
+#define MODE_NAME_1 "UTC&Local"
+#define MODE_NAME_2 "Timestamp"
+#define MODE_NAME_3 "Stopwatch"
+#define MODE_NAME_4 "Timer"
+#define MODE_NAME_5 "Local Only"

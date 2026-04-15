@@ -3,6 +3,7 @@
 #include <TinyGPS++.h>
 #include "st7036.h"
 #include "config.h"
+#include "modes.h"
 
 // ===== LCD =====
 ST7036 lcd(LCD_ADDR);
@@ -16,6 +17,8 @@ TinyGPSPlus gps;
 #define ENC_BTN PIN_ENC_BTN
 #define BTN_LEFT PIN_BTN_LEFT
 #define BTN_RIGHT PIN_BTN_RIGHT
+#define BTN_TOP PIN_BTN_TOP
+#define BUZZER PIN_BUZZER
 
 // ===== Encoder =====
 volatile int32_t encoderCount = 0;
@@ -36,28 +39,6 @@ void handleEncoder() {
   lastState = state;
 }
 
-// ===== GPS Validation =====
-bool isGPSTimeReliable() {
-  if (!gps.time.isValid() || !gps.date.isValid()) {
-    return false;
-  }
-  
-  int year = gps.date.year();
-  int month = gps.date.month();
-  int day = gps.date.day();
-  
-  // Sanity check: year should be reasonable (>= 2020)
-  if (year < 2020) return false;
-  
-  // Month should be 1-12
-  if (month < 1 || month > 12) return false;
-  
-  // Day should be 1-31
-  if (day < 1 || day > 31) return false;
-  
-  return true;
-}
-
 // ===== Setup =====
 void setup() {
   Wire.begin();
@@ -70,6 +51,8 @@ void setup() {
   pinMode(ENC_BTN, INPUT_PULLUP);
   pinMode(BTN_LEFT, INPUT_PULLUP);
   pinMode(BTN_RIGHT, INPUT_PULLUP);
+  pinMode(BTN_TOP, INPUT_PULLUP);
+  pinMode(BUZZER, OUTPUT);
 
   lastState = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
 
@@ -88,109 +71,33 @@ void loop() {
   }
 
   static uint32_t lastUpdate = 0;
+  static uint8_t lastDisplayedMode = 255;
 
-  // Cache last values (for no-flicker updates)
-  static int lastSec = -1;
-  static int lastSat = -1;
-  static int32_t lastCount = -9999;
-  static uint32_t lastAge = 9999;
-  static bool lastL = false, lastR = false, lastP = false;
-  static bool lastTimeValid = false;
+  // ===== Read Encoder for Mode Change =====
+  int32_t encoderValue;
+  noInterrupts();
+  encoderValue = encoderCount;
+  interrupts();
+
+  // Calculate mode only when encoder changes significantly
+  int32_t currentModeValue = encoderValue / ENC_DIVISOR;
+  
+  // Wrap mode to 0-5
+  while (currentModeValue < 0) currentModeValue += NUM_MODES;
+  currentModeValue = currentModeValue % NUM_MODES;
+  
+  uint8_t newMode = (uint8_t)currentModeValue;
+
+  // Mode changed - increment epoch to signal all display functions
+  if (newMode != lastDisplayedMode) {
+    lastDisplayedMode = newMode;
+    g_currentMode = newMode;
+    g_modeEpoch++;  // Signal mode change to all display functions
+    buzzOnce(100);  // Buzz for 100ms on mode change
+  }
 
   if (millis() - lastUpdate > DISPLAY_UPDATE_MS) {
     lastUpdate = millis();
-
-    // ===== GPS data =====
-    bool fix = gps.location.isValid();
-    int sat = gps.satellites.value();
-
-    int h = gps.time.hour();
-    int m = gps.time.minute();
-    int s = gps.time.second();
-
-    // ===== Age =====
-    uint32_t age_ms = gps.location.age();
-    uint32_t age_s;
-
-    if (age_ms > MAX_AGE_MS) {
-      age_s = MAX_AGE_DISPLAY;
-    } else {
-      age_s = age_ms / 1000;
-      if (age_s > MAX_AGE_DISPLAY) age_s = MAX_AGE_DISPLAY;
-    }
-
-    // ===== Encoder =====
-    int32_t count;
-    noInterrupts();
-    count = encoderCount;
-    interrupts();
-    count /= ENC_DIVISOR;
-
-    // ===== Buttons =====
-    bool L = !digitalRead(BTN_LEFT);
-    bool R = !digitalRead(BTN_RIGHT);
-    bool P = !digitalRead(ENC_BTN);
-
-    // ===== GPS State =====
-    char gpsState[3];
-    if (!gps.time.isValid()) {
-      strcpy(gpsState, "NO");
-    }
-    else if (gps.location.isValid()) {
-      strcpy(gpsState, "FX");
-    }
-    else if (gps.satellites.value() > 0) {
-      strcpy(gpsState, "AC");
-    }
-    else {
-      strcpy(gpsState, "TI");
-    }
-
-    // ===== Line 1: Date + Time =====
-    bool timeValid = isGPSTimeReliable();
-    
-    if (s != lastSec || sat != lastSat || timeValid != lastTimeValid) {
-      lcd.setCursor(0, 0);
-
-      char buf[LCD_BUF_SIZE];
-      
-      if (timeValid) {
-        int y = gps.date.year();
-        int mo = gps.date.month();
-        int d = gps.date.day();
-        snprintf(buf, LCD_BUF_SIZE,
-                 "%04d-%02d-%02d %02d:%02d:%02dZ",
-                 y, mo, d, h, m, s);
-      } else {
-        snprintf(buf, LCD_BUF_SIZE,
-                 "YYYY-MM-DD HH:MM:SSZ");
-      }
-
-      lcd.print(buf);
-
-      lastSec = s;
-      lastSat = sat;
-    }
-
-    // ===== Line 2: GPS Status + Satellites + Battery =====
-    if (count != lastCount || age_s != lastAge || L != lastL || R != lastR || P != lastP || timeValid != lastTimeValid) {
-
-      lcd.setCursor(0, 1);
-
-      char buf2[LCD_BUF_SIZE];
-      snprintf(buf2, LCD_BUF_SIZE,
-               "GPS:%s SAT:%02d BAT:XX",
-               gpsState,
-               sat);
-
-      lcd.print(buf2);
-
-      lastCount = count;
-      lastAge = age_s;
-      lastL = L;
-      lastR = R;
-      lastP = P;
-      lastTimeValid = timeValid;
-    }
+    updateDisplay(g_currentMode);
   }
 }
