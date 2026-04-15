@@ -1,5 +1,7 @@
 #pragma once
 
+#include "buttons.h"
+
 // ===== Mode Display Function Declarations =====
 void displayModeUTCOnly();
 void displayModeUTCLocal();
@@ -9,6 +11,7 @@ void displayModeTimer();
 void displayModeLocalOnly();
 void updateDisplay(uint8_t mode);
 void buzzOnce(uint16_t durationMs);
+void handleModeEvent(uint8_t mode, ButtonEvent_t event);
 
 // ===== External globals =====
 extern uint8_t g_currentMode;

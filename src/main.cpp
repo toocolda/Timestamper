@@ -4,6 +4,8 @@
 #include "st7036.h"
 #include "config.h"
 #include "modes.h"
+#include "buttons.h"
+#include "time_edit.h"
 
 // ===== LCD =====
 ST7036 lcd(LCD_ADDR);
@@ -59,6 +61,8 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_A), handleEncoder, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_B), handleEncoder, CHANGE);
 
+  initButtons();
+
   lcd.setCursor(0, 0);
   lcd.print("Init...");
 }
@@ -70,30 +74,47 @@ void loop() {
     gps.encode(Serial.read());
   }
 
+  // ===== Handle Button Presses =====
+  ButtonEvent_t buttonEvent = handleButtons();
+  
+  // Send button events to modes for handling
+  handleModeEvent(g_currentMode, buttonEvent);
+
   static uint32_t lastUpdate = 0;
   static uint8_t lastDisplayedMode = 255;
+  static int32_t lastEncoderForEdit = 0;
 
-  // ===== Read Encoder for Mode Change =====
+  // ===== Read Encoder =====
   int32_t encoderValue;
   noInterrupts();
   encoderValue = encoderCount;
   interrupts();
 
-  // Calculate mode only when encoder changes significantly
-  int32_t currentModeValue = encoderValue / ENC_DIVISOR;
-  
-  // Wrap mode to 0-5
-  while (currentModeValue < 0) currentModeValue += NUM_MODES;
-  currentModeValue = currentModeValue % NUM_MODES;
-  
-  uint8_t newMode = (uint8_t)currentModeValue;
+  // ===== Handle Encoder Input =====
+  if (timeEditIsActive()) {
+    // In edit mode: use encoder to adjust current field
+    int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
+    if (encDelta != 0) {
+      timeEditRotaryInput(encDelta);
+      lastEncoderForEdit = encoderValue / ENC_DIVISOR;
+    }
+  } else {
+    // Normal mode: use encoder to change modes
+    int32_t currentModeValue = encoderValue / ENC_DIVISOR;
+    
+    // Wrap mode to 0-5
+    while (currentModeValue < 0) currentModeValue += NUM_MODES;
+    currentModeValue = currentModeValue % NUM_MODES;
+    
+    uint8_t newMode = (uint8_t)currentModeValue;
 
-  // Mode changed - increment epoch to signal all display functions
-  if (newMode != lastDisplayedMode) {
-    lastDisplayedMode = newMode;
-    g_currentMode = newMode;
-    g_modeEpoch++;  // Signal mode change to all display functions
-    buzzOnce(100);  // Buzz for 100ms on mode change
+    // Mode changed - increment epoch to signal all display functions
+    if (newMode != lastDisplayedMode) {
+      lastDisplayedMode = newMode;
+      g_currentMode = newMode;
+      g_modeEpoch++;  // Signal mode change to all display functions
+      buzzOnce(100);  // Buzz for 100ms on mode change
+    }
   }
 
   if (millis() - lastUpdate > DISPLAY_UPDATE_MS) {
