@@ -1,10 +1,11 @@
 #pragma once
 #include <Arduino.h>
 #include <Wire.h>
+#include "config.h"
 
 class ST7036 {
 public:
-    ST7036(uint8_t addr = 0x3C);
+    ST7036(uint8_t addr = LCD_ADDR);
 
     void begin();
     void clear();

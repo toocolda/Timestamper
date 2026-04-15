@@ -4,42 +4,42 @@ ST7036::ST7036(uint8_t addr) : _addr(addr) {}
 
 void ST7036::cmd(uint8_t c) {
     Wire.beginTransmission(_addr);
-    Wire.write(0x00); // command mode
+    Wire.write(LCD_I2C_CMD_MODE);
     Wire.write(c);
     Wire.endTransmission();
 }
 
 void ST7036::data(uint8_t d) {
     Wire.beginTransmission(_addr);
-    Wire.write(0x40); // data mode
+    Wire.write(LCD_I2C_DATA_MODE);
     Wire.write(d);
     Wire.endTransmission();
 }
 
 void ST7036::begin() {
-    delay(50);
+    delay(LCD_INIT_DELAY_1);
 
-    cmd(0x38); // function set
-    cmd(0x39); // function set (extended)
-    cmd(0x14); // internal osc
-    cmd(0x70 | 0x0F);  // max contrast
-    cmd(0x56); // power/contrast
-    cmd(0x6C); // follower control
-    delay(200);
+    cmd(LCD_CMD_FUNC_SET);
+    cmd(LCD_CMD_FUNC_SET_EXT);
+    cmd(LCD_CMD_INTERNAL_OSC);
+    cmd(LCD_CMD_CONTRAST_MAX);
+    cmd(LCD_CMD_POWER_CONTRAST);
+    cmd(LCD_CMD_FOLLOWER);
+    delay(LCD_INIT_DELAY_2);
 
-    cmd(0x38); // function set
-    cmd(0x0C); // display ON
-    cmd(0x01); // clear
-    delay(2);
+    cmd(LCD_CMD_FUNC_SET);
+    cmd(LCD_CMD_DISPLAY_ON);
+    cmd(LCD_CMD_CLEAR);
+    delay(LCD_CLEAR_DELAY);
 }
 
 void ST7036::clear() {
-    cmd(0x01);
-    delay(2);
+    cmd(LCD_CMD_CLEAR);
+    delay(LCD_CLEAR_DELAY);
 }
 
 void ST7036::setCursor(uint8_t col, uint8_t row) {
-    uint8_t addr = (row == 0) ? 0x80 : 0xC0;
+    uint8_t addr = (row == 0) ? LCD_ADDR_ROW0 : LCD_ADDR_ROW1;
     cmd(addr + col);
 }
 
