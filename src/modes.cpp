@@ -5,6 +5,7 @@
 #include "time_edit.h"
 #include "mcu_time.h"
 #include "local_time.h"
+#include "stopwatch.h"
 #include "buttons.h"
 
 // Forward declarations from main.cpp
@@ -367,13 +368,53 @@ void displayModeTimestampReview() {
 // ===== Mode: Stopwatch =====
 void displayModeStopwatch() {
   static uint32_t lastEpoch = 0;
+  static uint32_t lastTenths1 = 0xFFFFFFFFUL;
+  static uint32_t lastTenths2 = 0xFFFFFFFFUL;
+  static bool lastRunning1 = false;
+  static bool lastRunning2 = false;
+  static uint8_t lastSelected = 255;
+
   if (lastEpoch != g_modeEpoch) {
     lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Stopwatch Mode");
-    lcd.setCursor(0, 1);
-    lcd.print("Coming Soon...");
     lastEpoch = g_modeEpoch;
+    lastTenths1 = 0xFFFFFFFFUL;
+    lastTenths2 = 0xFFFFFFFFUL;
+    lastRunning1 = !stopwatchIsRunning(0);  // force redraw below
+    lastRunning2 = !stopwatchIsRunning(1);  // force redraw below
+    lastSelected = 255;
+  }
+
+  uint32_t tenths1 = stopwatchGetTenths(0);
+  uint32_t tenths2 = stopwatchGetTenths(1);
+  bool running1 = stopwatchIsRunning(0);
+  bool running2 = stopwatchIsRunning(1);
+  uint8_t selected = stopwatchGetSelected();
+
+  if (tenths1 != lastTenths1 || tenths2 != lastTenths2 ||
+      running1 != lastRunning1 || running2 != lastRunning2 ||
+      selected != lastSelected) {
+    uint8_t h1 = 0, m1 = 0, s1 = 0, t1 = 0;
+    uint8_t h2 = 0, m2 = 0, s2 = 0, t2 = 0;
+    stopwatchGetDisplay(0, &h1, &m1, &s1, &t1);
+    stopwatchGetDisplay(1, &h2, &m2, &s2, &t2);
+
+    lcd.setCursor(0, 0);
+    char line1[LCD_BUF_SIZE];
+    snprintf(line1, LCD_BUF_SIZE, "%cSW1 %02d:%02d:%02d.%1d %s",
+             (selected == 0) ? '>' : ' ', h1, m1, s1, t1, running1 ? "RUN" : "STP");
+    lcd.print(line1);
+
+    lcd.setCursor(0, 1);
+    char line2[LCD_BUF_SIZE];
+    snprintf(line2, LCD_BUF_SIZE, "%cSW2 %02d:%02d:%02d.%1d %s",
+             (selected == 1) ? '>' : ' ', h2, m2, s2, t2, running2 ? "RUN" : "STP");
+    lcd.print(line2);
+
+    lastTenths1 = tenths1;
+    lastTenths2 = tenths2;
+    lastRunning1 = running1;
+    lastRunning2 = running2;
+    lastSelected = selected;
   }
 }
 
@@ -448,6 +489,17 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     } else if (event == BUTTON_ENC_SHORT && offsetEditIsActive()) {
       // Exit offset edit mode and save
       offsetEditStop();
+    }
+  } else if (mode == MODE_STOPWATCH) {
+    if (event == BUTTON_ENC_SHORT) {
+      // Toggle selected stopwatch (SW1 <-> SW2)
+      stopwatchToggleSelected();
+    } else if (event == BUTTON_RIGHT_SHORT) {
+      // Right button controls selected stopwatch start/stop
+      stopwatchStartStopToggle(stopwatchGetSelected());
+    } else if (event == BUTTON_LEFT_SHORT) {
+      // Left button resets selected stopwatch
+      stopwatchReset(stopwatchGetSelected());
     }
   }
 }

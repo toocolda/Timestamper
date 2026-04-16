@@ -8,6 +8,7 @@
 #include "time_edit.h"
 #include "mcu_time.h"
 #include "local_time.h"
+#include "stopwatch.h"
 
 // ===== LCD =====
 ST7036 lcd(LCD_ADDR);
@@ -160,8 +161,14 @@ void loop() {
     }
   }
 
-  // ===== Update Display (200ms throttle) =====
-  if (millis() - lastUpdate >= 200) {
+  // ===== Update Display (adaptive throttle) =====
+  // Stopwatch needs 0.1s visual resolution.
+  uint16_t refreshMs = 200;
+  if (g_currentMode == MODE_STOPWATCH || stopwatchAnyRunning()) {
+    refreshMs = 100;
+  }
+
+  if (millis() - lastUpdate >= refreshMs) {
     lastUpdate = millis();
     updateDisplay(g_currentMode);
   }
