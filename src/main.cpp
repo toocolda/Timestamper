@@ -83,6 +83,7 @@ void loop() {
   static uint32_t lastUpdate = 0;
   static uint8_t lastDisplayedMode = 255;
   static int32_t lastEncoderForEdit = 0;
+  static bool wasEditing = false;
 
   // ===== Read Encoder =====
   int32_t encoderValue;
@@ -90,34 +91,57 @@ void loop() {
   encoderValue = encoderCount;
   interrupts();
 
+  bool isEditing = timeEditIsActive();
+  static bool skipModeChangeOnce = false;  // Skip one mode change iteration after edit exit
+
   // ===== Handle Encoder Input =====
-  if (timeEditIsActive()) {
+  if (isEditing) {
     // In edit mode: use encoder to adjust current field
     int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
     if (encDelta != 0) {
       timeEditRotaryInput(encDelta);
       lastEncoderForEdit = encoderValue / ENC_DIVISOR;
     }
+    wasEditing = true;
+    skipModeChangeOnce = false;
   } else {
-    // Normal mode: use encoder to change modes
-    int32_t currentModeValue = encoderValue / ENC_DIVISOR;
+    // Not editing anymore - handle transition and normal mode
+    if (wasEditing) {
+      // Just exited edit mode - reset encoder to prevent mode jump
+      noInterrupts();
+      encoderCount = 0;  // Reset global encoder counter
+      interrupts();
+      lastEncoderForEdit = 0;
+      lastDisplayedMode = g_currentMode;  // Preserve current mode
+      wasEditing = false;
+      skipModeChangeOnce = true;  // Skip mode change this iteration
+    }
     
-    // Wrap mode to 0-5
-    while (currentModeValue < 0) currentModeValue += NUM_MODES;
-    currentModeValue = currentModeValue % NUM_MODES;
-    
-    uint8_t newMode = (uint8_t)currentModeValue;
+    // Normal mode: use encoder to change modes (but skip first iteration after edit)
+    if (!skipModeChangeOnce) {
+      int32_t currentModeValue = encoderValue / ENC_DIVISOR;
+      
+      // Wrap mode to 0-5
+      while (currentModeValue < 0) currentModeValue += NUM_MODES;
+      currentModeValue = currentModeValue % NUM_MODES;
+      
+      uint8_t newMode = (uint8_t)currentModeValue;
 
-    // Mode changed - increment epoch to signal all display functions
-    if (newMode != lastDisplayedMode) {
-      lastDisplayedMode = newMode;
-      g_currentMode = newMode;
-      g_modeEpoch++;  // Signal mode change to all display functions
-      buzzOnce(100);  // Buzz for 100ms on mode change
+      // Mode changed - increment epoch to signal all display functions
+      if (newMode != lastDisplayedMode) {
+        lastDisplayedMode = newMode;
+        g_currentMode = newMode;
+        g_modeEpoch++;  // Signal mode change to all display functions
+        buzzOnce(100);  // Buzz for 100ms on mode change
+      }
+    } else {
+      // Skip mode change this iteration
+      skipModeChangeOnce = false;
     }
   }
 
-  if (millis() - lastUpdate > DISPLAY_UPDATE_MS) {
+  // ===== Update Display (200ms throttle) =====
+  if (millis() - lastUpdate >= 200) {
     lastUpdate = millis();
     updateDisplay(g_currentMode);
   }

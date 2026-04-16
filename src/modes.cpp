@@ -65,10 +65,16 @@ void displayModeUTCOnly() {
   
   bool editMode = timeEditIsActive();
   
-  // If entering/exiting edit mode, clear display
+  // If entering/exiting edit mode, clear display and reset cache
   if (editMode != lastEditMode) {
     lcd.clear();
     lastEditMode = editMode;
+    if (!editMode) {
+      // Just exited edit mode - reset display cache to force redraw
+      lastSec = -1;
+      lastSat = -1;
+      lastTimeValid = false;
+    }
   }
   
   if (editMode) {
@@ -136,31 +142,52 @@ void displayModeUTCOnly() {
       snprintf(sec_str, sizeof(sec_str), "%02d", editData.second);
     }
     
-    snprintf(buf, LCD_BUF_SIZE, "%s-%s-%s %s:%s:%s",
+    snprintf(buf, LCD_BUF_SIZE, "%s-%s-%s %s:%s:%sZ",
              year_str, month_str, day_str, hour_str, min_str, sec_str);
     lcd.print(buf);
     
+    // Show GPS status on line 2 as hint (blinking field is visual hint)
     lcd.setCursor(0, 1);
-    const char* fieldName = "";
-    switch (field) {
-      case EDIT_FIELD_YEAR: fieldName = "Year"; break;
-      case EDIT_FIELD_MONTH: fieldName = "Month"; break;
-      case EDIT_FIELD_DAY: fieldName = "Day"; break;
-      case EDIT_FIELD_HOUR: fieldName = "Hour"; break;
-      case EDIT_FIELD_MINUTE: fieldName = "Min"; break;
-      case EDIT_FIELD_SECOND: fieldName = "Sec"; break;
-      default: fieldName = "Done"; break;
+    int sat = gps.satellites.value();
+    char gpsStatus[3];
+    if (!isGPSTimeReliable()) {
+      strcpy(gpsStatus, "NO");
+    } else if (gps.location.isValid()) {
+      strcpy(gpsStatus, "FX");
+    } else if (sat > 0) {
+      strcpy(gpsStatus, "AC");
+    } else {
+      strcpy(gpsStatus, "TI");
     }
-    snprintf(buf, LCD_BUF_SIZE, "Editing: %s    ", fieldName);
+    snprintf(buf, LCD_BUF_SIZE, "GPS:%s SAT:%02d BAT:XX", gpsStatus, sat);
     lcd.print(buf);
     
   } else {
-    // ===== NORMAL DISPLAY =====
+    // ===== NORMAL DISPLAY - Uses MCU time (ticks independently) =====
+    // GPS sync happens here: MCU clock is continuously synced to GPS when GPS signal is valid
+    // This allows GPS to provide periodic correction while MCU provides independent ticking
     bool timeValid = isGPSTimeReliable();
     int sat = gps.satellites.value();
-    int h = gps.time.hour();
-    int m = gps.time.minute();
-    int s = gps.time.second();
+    
+    // GPS SYNC: Every display update, if GPS is valid, MCU time syncs to GPS
+    // (see line ~168 in modes.cpp, displayModeUTCOnly function)
+    // BUT: Skip GPS sync if manual time was just set (5 second grace period)
+    if (timeValid && !shouldSkipGPSSync()) {
+      TimeEdit_t gpsTime;
+      gpsTime.year = gps.date.year();
+      gpsTime.month = gps.date.month();
+      gpsTime.day = gps.date.day();
+      gpsTime.hour = gps.time.hour();
+      gpsTime.minute = gps.time.minute();
+      gpsTime.second = gps.time.second();
+      mcuTimeSync(&gpsTime);
+    }
+    
+    // Get current time from MCU (ticks based on elapsed ms)
+    TimeEdit_t currentTime = mcuTimeGetCurrent();
+    int h = currentTime.hour;
+    int m = currentTime.minute;
+    int s = currentTime.second;
     
     char gpsStatus[3];
     if (!isGPSTimeReliable()) {
@@ -177,20 +204,12 @@ void displayModeUTCOnly() {
       lcd.setCursor(0, 0);
       
       char buf[LCD_BUF_SIZE];
-      if (timeValid) {
-        int y = gps.date.year();
-        int mo = gps.date.month();
-        int d = gps.date.day();
+      if (timeValid || hasManualTime()) {
+        // Display with MCU time (which keeps ticking)
         snprintf(buf, LCD_BUF_SIZE,
                  "%04d-%02d-%02d %02d:%02d:%02dZ",
-                 y, mo, d, h, m, s);
-      } else if (hasManualTime()) {
-        // Use manual time as fallback
-        TimeEdit_t manual = getManualTime();
-        snprintf(buf, LCD_BUF_SIZE,
-                 "%04d-%02d-%02d %02d:%02d:%02dZ",
-                 manual.year, manual.month, manual.day,
-                 manual.hour, manual.minute, manual.second);
+                 currentTime.year, currentTime.month, currentTime.day,
+                 h, m, s);
       } else {
         snprintf(buf, LCD_BUF_SIZE,
                  "YYYY-MM-DD HH:MM:SSZ");
@@ -306,23 +325,8 @@ void updateDisplay(uint8_t mode) {
 void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
   if (mode == MODE_UTC_ONLY) {
     if (event == BUTTON_ENC_LONG) {
-      // Start time edit mode
-      TimeEdit_t currentTime;
-      if (isGPSTimeReliable()) {
-        currentTime.year = gps.date.year();
-        currentTime.month = gps.date.month();
-        currentTime.day = gps.date.day();
-        currentTime.hour = gps.time.hour();
-        currentTime.minute = gps.time.minute();
-        currentTime.second = gps.time.second();
-      } else {
-        currentTime.year = 2020;
-        currentTime.month = 1;
-        currentTime.day = 1;
-        currentTime.hour = 0;
-        currentTime.minute = 0;
-        currentTime.second = 0;
-      }
+      // Start time edit mode - use current MCU time (which is GPS-synced or manually set)
+      TimeEdit_t currentTime = mcuTimeGetCurrent();
       timeEditStart(&currentTime);
     } else if (event == BUTTON_ENC_SHORT && timeEditIsActive()) {
       // Move to next field in edit mode

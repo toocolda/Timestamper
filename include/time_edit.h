@@ -38,3 +38,11 @@ bool timeEditShouldFlash();  // For flashing display of current field
 void setManualTime(TimeEdit_t* timeData);
 TimeEdit_t getManualTime();
 bool hasManualTime();
+bool shouldSkipGPSSync();  // Check if manual time was recently set
+
+// ===== Date Validation =====
+bool isValidDate(uint16_t year, uint8_t month, uint8_t day);
+
+// ===== MCU Time Tracking =====
+void mcuTimeSync(TimeEdit_t* timeData);
+TimeEdit_t mcuTimeGetCurrent();
