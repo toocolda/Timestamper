@@ -6,6 +6,8 @@
 #include "modes.h"
 #include "buttons.h"
 #include "time_edit.h"
+#include "mcu_time.h"
+#include "local_time.h"
 
 // ===== LCD =====
 ST7036 lcd(LCD_ADDR);
@@ -92,11 +94,18 @@ void loop() {
   interrupts();
 
   bool isEditing = timeEditIsActive();
+  bool isEditingOffset = offsetEditIsActive();
+  bool anyEditing = isEditing || isEditingOffset;
   static bool skipModeChangeOnce = false;  // Skip one mode change iteration after edit exit
+
+  // On entry to any edit mode, sync encoder baseline so first delta is zero.
+  if (anyEditing && !wasEditing) {
+    lastEncoderForEdit = encoderValue / ENC_DIVISOR;
+  }
 
   // ===== Handle Encoder Input =====
   if (isEditing) {
-    // In edit mode: use encoder to adjust current field
+    // In time edit mode: use encoder to adjust current field
     int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
     if (encDelta != 0) {
       timeEditRotaryInput(encDelta);
@@ -104,14 +113,25 @@ void loop() {
     }
     wasEditing = true;
     skipModeChangeOnce = false;
+  } else if (isEditingOffset) {
+    // In offset edit mode: use encoder to adjust offset
+    int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
+    if (encDelta != 0) {
+      offsetEditRotaryInput(encDelta);
+      lastEncoderForEdit = encoderValue / ENC_DIVISOR;
+    }
+    wasEditing = true;
+    skipModeChangeOnce = false;
   } else {
     // Not editing anymore - handle transition and normal mode
     if (wasEditing) {
-      // Just exited edit mode - reset encoder to prevent mode jump
+      // Just exited edit mode - anchor encoder to current mode to prevent jump.
+      int32_t anchoredCount = (int32_t)g_currentMode * ENC_DIVISOR;
       noInterrupts();
-      encoderCount = 0;  // Reset global encoder counter
+      encoderCount = anchoredCount;
       interrupts();
-      lastEncoderForEdit = 0;
+      encoderValue = anchoredCount;
+      lastEncoderForEdit = anchoredCount / ENC_DIVISOR;
       lastDisplayedMode = g_currentMode;  // Preserve current mode
       wasEditing = false;
       skipModeChangeOnce = true;  // Skip mode change this iteration

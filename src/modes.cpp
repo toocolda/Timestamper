@@ -3,6 +3,8 @@
 #include "config.h"
 #include <TinyGPS++.h>
 #include "time_edit.h"
+#include "mcu_time.h"
+#include "local_time.h"
 #include "buttons.h"
 
 // Forward declarations from main.cpp
@@ -232,14 +234,120 @@ void displayModeUTCOnly() {
 
 // ===== Mode: UTC & Local =====
 void displayModeUTCLocal() {
+  static int lastSecUTC = -1;
+  static int lastSecLocal = -1;
+  static int lastOffsetShown = 127;
+  static bool lastTimeValid = false;
   static uint32_t lastEpoch = 0;
+  static bool lastOffsetEditMode = false;
+  
+  // Reset cache if mode changed
   if (lastEpoch != g_modeEpoch) {
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("UTC&Local Mode");
-    lcd.setCursor(0, 1);
-    lcd.print("Coming Soon...");
+    lastSecUTC = -1;
+    lastSecLocal = -1;
+    lastOffsetShown = 127;
+    lastTimeValid = false;
     lastEpoch = g_modeEpoch;
+    lastOffsetEditMode = false;
+    lcd.clear();
+  }
+  
+  bool offsetEditMode = offsetEditIsActive();
+  
+  // If entering/exiting offset edit mode, clear display and reset cache
+  if (offsetEditMode != lastOffsetEditMode) {
+    lcd.clear();
+    lastOffsetEditMode = offsetEditMode;
+    if (!offsetEditMode) {
+      // Just exited edit mode - reset display cache to force redraw
+      lastSecUTC = -1;
+      lastSecLocal = -1;
+      lastOffsetShown = 127;
+      lastTimeValid = false;
+    }
+  }
+
+  bool timeValid = isGPSTimeReliable();
+  if (timeValid && !shouldSkipGPSSync()) {
+    TimeEdit_t gpsTime;
+    gpsTime.year = gps.date.year();
+    gpsTime.month = gps.date.month();
+    gpsTime.day = gps.date.day();
+    gpsTime.hour = gps.time.hour();
+    gpsTime.minute = gps.time.minute();
+    gpsTime.second = gps.time.second();
+    mcuTimeSync(&gpsTime);
+  }
+  
+  if (offsetEditMode) {
+    // ===== OFFSET EDIT DISPLAY =====
+    TimeEdit_t utcTime = mcuTimeGetCurrent();
+    int8_t currentOffset = offsetEditGetValue();
+    bool shouldShowOffset = offsetEditShouldFlash();
+    TimeEdit_t localTime = calculateLocalTimeWithOffset(utcTime, currentOffset);
+    
+    // Line 1: UTC time (MM-DD HH:MM:SS UTC)
+    lcd.setCursor(0, 0);
+    char buf1[LCD_BUF_SIZE];
+    snprintf(buf1, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d UTC",
+             utcTime.month, utcTime.day, utcTime.hour, utcTime.minute, utcTime.second);
+    lcd.print(buf1);
+    
+    // Line 2: Local time with blinking offset
+    lcd.setCursor(0, 1);
+    char buf2[LCD_BUF_SIZE];
+    char offsetStr[5];
+    if (shouldShowOffset) {
+      snprintf(offsetStr, sizeof(offsetStr), "%+03d", currentOffset);  // Show as +00/-07/+14
+    } else {
+      strcpy(offsetStr, "   ");  // Blank during flash-off
+    }
+    snprintf(buf2, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d %s",
+             localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offsetStr);
+    lcd.print(buf2);
+    
+  } else {
+    // ===== NORMAL DISPLAY =====
+    int8_t offset = getUTCOffset();
+
+    if (!timeValid && !hasManualTime()) {
+      if (lastTimeValid || lastOffsetShown != offset) {
+        lcd.setCursor(0, 0);
+        lcd.print("MM-DD HH:MM:SS UTC ");
+        lcd.setCursor(0, 1);
+        lcd.print("MM-DD HH:MM:SS +00 ");
+        lastTimeValid = false;
+        lastOffsetShown = offset;
+        lastSecUTC = -1;
+        lastSecLocal = -1;
+      }
+      return;
+    }
+
+    TimeEdit_t utcTime = mcuTimeGetCurrent();
+    TimeEdit_t localTime = calculateLocalTime(utcTime);
+    
+    // Only refresh if seconds changed
+    if (utcTime.second != lastSecUTC || localTime.second != lastSecLocal || offset != lastOffsetShown || !lastTimeValid) {
+      lastSecUTC = utcTime.second;
+      lastSecLocal = localTime.second;
+      lastOffsetShown = offset;
+      lastTimeValid = true;
+      
+      // Line 1: UTC time (MM-DD HH:MM:SS UTC)
+      lcd.setCursor(0, 0);
+      char buf1[LCD_BUF_SIZE];
+      snprintf(buf1, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d UTC",
+               utcTime.month, utcTime.day, utcTime.hour, utcTime.minute, utcTime.second);
+      lcd.print(buf1);
+      
+      // Line 2: Local time (MM-DD HH:MM:SS +/-offset)
+      lcd.setCursor(0, 1);
+      char buf2[LCD_BUF_SIZE];
+      snprintf(buf2, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d %+03d",
+               localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offset);
+      lcd.print(buf2);
+    }
   }
 }
 
@@ -331,6 +439,15 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     } else if (event == BUTTON_ENC_SHORT && timeEditIsActive()) {
       // Move to next field in edit mode
       timeEditButtonPress();
+    }
+  } else if (mode == MODE_UTC_LOCAL) {
+    if (event == BUTTON_ENC_LONG) {
+      // Start offset edit mode
+      int8_t currentOffset = getUTCOffset();
+      offsetEditStart(currentOffset);
+    } else if (event == BUTTON_ENC_SHORT && offsetEditIsActive()) {
+      // Exit offset edit mode and save
+      offsetEditStop();
     }
   }
 }
