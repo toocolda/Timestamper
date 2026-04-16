@@ -6,6 +6,7 @@
 #include "mcu_time.h"
 #include "local_time.h"
 #include "stopwatch.h"
+#include "timer_mode.h"
 #include "buttons.h"
 
 // Forward declarations from main.cpp
@@ -421,13 +422,110 @@ void displayModeStopwatch() {
 // ===== Mode: Timer =====
 void displayModeTimer() {
   static uint32_t lastEpoch = 0;
+  static uint32_t lastSig = 0xFFFFFFFFUL;
+
   if (lastEpoch != g_modeEpoch) {
     lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Timer Mode");
-    lcd.setCursor(0, 1);
-    lcd.print("Coming Soon...");
     lastEpoch = g_modeEpoch;
+    lastSig = 0xFFFFFFFFUL;
+  }
+
+  uint8_t sel = timerGetSelected();
+  bool editActive = timerEditIsActive();
+  bool editFlashShow = true;
+  if (editActive) {
+    editFlashShow = timerEditShouldFlash();
+  }
+
+  uint8_t h1 = 0, m1 = 0, s1 = 0;
+  uint8_t h2 = 0, m2 = 0, s2 = 0;
+  bool e1 = false, r1 = false, a1 = false;
+  bool e2 = false, r2 = false, a2 = false;
+
+  timerGetDisplay(0, &h1, &m1, &s1, &e1, &r1, &a1);
+  timerGetDisplay(1, &h2, &m2, &s2, &e2, &r2, &a2);
+
+  // 32-bit signature with non-overlapping bit zones per channel so equal
+  // values between T1 and T2 never XOR-cancel each other.
+  uint32_t sig = 0;
+  sig  = (uint32_t)(s1 & 0x3F);           // bits  5: 0  - T1 seconds
+  sig |= (uint32_t)(s2 & 0x3F) << 6;      // bits 11: 6  - T2 seconds
+  sig |= (uint32_t)(m1 & 0x3F) << 12;     // bits 17:12  - T1 minutes
+  sig |= (uint32_t)(m2 & 0x3F) << 18;     // bits 23:18  - T2 minutes
+  sig |= (uint32_t)(h1 & 0x0F) << 24;     // bits 27:24  - T1 hours
+  sig |= (uint32_t)(h2 & 0x0F) << 28;     // bits 31:28  - T2 hours
+  // Flags XOR'd in; collision probability is negligible for state transitions.
+  uint16_t flagBits = ((uint16_t)(sel != 0)    ) |
+                      ((uint16_t)r1        << 1 ) |
+                      ((uint16_t)r2        << 2 ) |
+                      ((uint16_t)a1        << 3 ) |
+                      ((uint16_t)a2        << 4 ) |
+                      ((uint16_t)e1        << 5 ) |
+                      ((uint16_t)e2        << 6 ) |
+                      ((uint16_t)editActive << 7 ) |
+                      ((uint16_t)editFlashShow << 8);
+  sig ^= (uint32_t)flagBits;
+
+  if (sig != lastSig) {
+    if (editActive) {
+      uint8_t eh = 0, em = 0, es = 0;
+      timerEditGetPreview(&eh, &em, &es);
+      bool show = editFlashShow;
+      uint8_t editIdx = timerEditGetIndex();
+      TimerEditField_t field = timerEditGetField();
+
+      char hh[3], mm[3], ss[3];
+      snprintf(hh, sizeof(hh), "%02d", eh);
+      snprintf(mm, sizeof(mm), "%02d", em);
+      snprintf(ss, sizeof(ss), "%02d", es);
+
+      if (!show) {
+        if (field == TIMER_EDIT_HOUR) strcpy(hh, "  ");
+        else if (field == TIMER_EDIT_MINUTE) strcpy(mm, "  ");
+        else if (field == TIMER_EDIT_SECOND) strcpy(ss, "  ");
+      }
+
+      // Keep non-edited channel visible for context.
+      lcd.setCursor(0, 0);
+      char line1[LCD_BUF_SIZE];
+      if (editIdx == 0) {
+        snprintf(line1, LCD_BUF_SIZE, ">T1  %s:%s:%s EDT", hh, mm, ss);
+      } else {
+        snprintf(line1, LCD_BUF_SIZE, " T1 %c%02d:%02d:%02d %s",
+                 e1 ? '+' : ' ', h1, m1, s1, a1 ? "ALM" : (r1 ? "RUN" : "STP"));
+      }
+      lcd.print(line1);
+
+      lcd.setCursor(0, 1);
+      char line2[LCD_BUF_SIZE];
+      if (editIdx == 1) {
+        snprintf(line2, LCD_BUF_SIZE, ">T2  %s:%s:%s EDT", hh, mm, ss);
+      } else {
+        snprintf(line2, LCD_BUF_SIZE, " T2 %c%02d:%02d:%02d %s",
+                 e2 ? '+' : ' ', h2, m2, s2, a2 ? "ALM" : (r2 ? "RUN" : "STP"));
+      }
+      lcd.print(line2);
+    } else {
+      lcd.setCursor(0, 0);
+      char line1[LCD_BUF_SIZE];
+      snprintf(line1, LCD_BUF_SIZE, "%cT1 %c%02d:%02d:%02d %s",
+               (sel == 0) ? '>' : ' ',
+               e1 ? '+' : ' ',
+               h1, m1, s1,
+               a1 ? "ALM" : (r1 ? "RUN" : "STP"));
+      lcd.print(line1);
+
+      lcd.setCursor(0, 1);
+      char line2[LCD_BUF_SIZE];
+      snprintf(line2, LCD_BUF_SIZE, "%cT2 %c%02d:%02d:%02d %s",
+               (sel == 1) ? '>' : ' ',
+               e2 ? '+' : ' ',
+               h2, m2, s2,
+               a2 ? "ALM" : (r2 ? "RUN" : "STP"));
+      lcd.print(line2);
+    }
+
+    lastSig = sig;
   }
 }
 
@@ -472,6 +570,12 @@ void updateDisplay(uint8_t mode) {
 
 // ===== Mode Event Handler =====
 void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
+  // Any button acknowledges active timer alarms and consumes the event.
+  if (event != BUTTON_NONE && timerAnyAlarmActive()) {
+    timerAcknowledgeAllAlarms();
+    return;
+  }
+
   if (mode == MODE_UTC_ONLY) {
     if (event == BUTTON_ENC_LONG) {
       // Start time edit mode - use current MCU time (which is GPS-synced or manually set)
@@ -500,6 +604,23 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     } else if (event == BUTTON_LEFT_SHORT) {
       // Left button resets selected stopwatch
       stopwatchReset(stopwatchGetSelected());
+    }
+  } else if (mode == MODE_TIMER) {
+    if (event == BUTTON_ENC_LONG) {
+      // Enter HH:MM:SS edit mode for selected timer (when stopped)
+      timerEditStart(timerGetSelected());
+    } else if (event == BUTTON_ENC_SHORT && timerEditIsActive()) {
+      // Advance edit field HH -> MM -> SS -> save+start
+      timerEditButtonPress();
+    } else if (event == BUTTON_ENC_SHORT) {
+      // Toggle selected timer (T1 <-> T2)
+      timerToggleSelected();
+    } else if (event == BUTTON_RIGHT_SHORT) {
+      // Right button controls selected timer start/stop
+      timerStartStopToggle(timerGetSelected());
+    } else if (event == BUTTON_LEFT_SHORT) {
+      // Left button resets selected timer to channel default
+      timerReset(timerGetSelected());
     }
   }
 }

@@ -9,6 +9,7 @@
 #include "mcu_time.h"
 #include "local_time.h"
 #include "stopwatch.h"
+#include "timer_mode.h"
 
 // ===== LCD =====
 ST7036 lcd(LCD_ADDR);
@@ -72,6 +73,9 @@ void setup() {
 
 // ===== Loop =====
 void loop() {
+  // ===== Background Timing Engines =====
+  timerModeUpdate();
+
   // ===== Read GPS =====
   while (Serial.available()) {
     gps.encode(Serial.read());
@@ -94,9 +98,19 @@ void loop() {
   encoderValue = encoderCount;
   interrupts();
 
+  // Any encoder movement acknowledges active timer alarms.
+  static int32_t lastEncoderForAlarmAck = 0;
+  if (encoderValue != lastEncoderForAlarmAck) {
+    if (timerAnyAlarmActive()) {
+      timerAcknowledgeAllAlarms();
+    }
+    lastEncoderForAlarmAck = encoderValue;
+  }
+
   bool isEditing = timeEditIsActive();
   bool isEditingOffset = offsetEditIsActive();
-  bool anyEditing = isEditing || isEditingOffset;
+  bool isEditingTimer = timerEditIsActive();
+  bool anyEditing = isEditing || isEditingOffset || isEditingTimer;
   static bool skipModeChangeOnce = false;  // Skip one mode change iteration after edit exit
 
   // On entry to any edit mode, sync encoder baseline so first delta is zero.
@@ -119,6 +133,15 @@ void loop() {
     int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
     if (encDelta != 0) {
       offsetEditRotaryInput(encDelta);
+      lastEncoderForEdit = encoderValue / ENC_DIVISOR;
+    }
+    wasEditing = true;
+    skipModeChangeOnce = false;
+  } else if (isEditingTimer) {
+    // In timer edit mode: use encoder to adjust HH/MM/SS field
+    int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
+    if (encDelta != 0) {
+      timerEditRotaryInput(encDelta);
       lastEncoderForEdit = encoderValue / ENC_DIVISOR;
     }
     wasEditing = true;
@@ -164,7 +187,8 @@ void loop() {
   // ===== Update Display (adaptive throttle) =====
   // Stopwatch needs 0.1s visual resolution.
   uint16_t refreshMs = 200;
-  if (g_currentMode == MODE_STOPWATCH || stopwatchAnyRunning()) {
+  if (g_currentMode == MODE_STOPWATCH || stopwatchAnyRunning() ||
+      g_currentMode == MODE_TIMER || timerAnyRunning() || timerAnyAlarmActive()) {
     refreshMs = 100;
   }
 
