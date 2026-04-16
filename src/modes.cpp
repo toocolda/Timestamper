@@ -529,17 +529,113 @@ void displayModeTimer() {
   }
 }
 
-// ===== Mode: Local Only =====
+// ===== Desk Mode (Local Only) State =====
+static uint8_t g_deskDateFmt  = 0;    // 0=ISO  1=ISO+day  2=US  3=US+day  4=EU+day
+static bool    g_deskIs12H    = false;
+static bool    g_deskShowUTC  = false;
+
+// Center a string into a 20-char null-terminated buffer.
+static void deskCenterLine(char* buf, const char* s) {
+  uint8_t len = (uint8_t)strlen(s);
+  if (len > LCD_COLS) len = LCD_COLS;
+  uint8_t lpad = (LCD_COLS - len) / 2;
+  memset(buf, ' ', LCD_COLS);
+  buf[LCD_COLS] = '\0';
+  memcpy(buf + lpad, s, len);
+}
+
+// Tomohiko Sakamoto day-of-week: 0=Sun … 6=Sat
+static uint8_t deskDayOfWeek(uint16_t y, uint8_t m, uint8_t d) {
+  static const uint8_t t[12] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  if (m < 3) y--;
+  return (uint8_t)((y + y/4 - y/100 + y/400 + t[m - 1] + d) % 7);
+}
+
 void displayModeLocalOnly() {
   static uint32_t lastEpoch = 0;
+  static uint32_t lastSig   = 0xFFFFFFFFUL;
+
   if (lastEpoch != g_modeEpoch) {
     lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Local Only Mode");
-    lcd.setCursor(0, 1);
-    lcd.print("Coming Soon...");
     lastEpoch = g_modeEpoch;
+    lastSig   = 0xFFFFFFFFUL;
   }
+
+  TimeEdit_t utc = mcuTimeGetCurrent();
+  TimeEdit_t t   = g_deskShowUTC ? utc : calculateLocalTime(utc);
+
+  // Compact signature across all displayed state.
+  uint32_t sig = (uint32_t)t.second
+               | ((uint32_t)t.minute  <<  6)
+               | ((uint32_t)t.hour    << 12)
+               | ((uint32_t)t.day     << 18)
+               | ((uint32_t)t.month   << 24);
+  sig ^= (uint32_t)t.year;
+  sig ^= ((uint32_t)g_deskDateFmt << 28);
+  sig ^= ((uint32_t)g_deskIs12H   << 1);
+  sig ^= ((uint32_t)g_deskShowUTC << 2);
+
+  if (sig == lastSig) return;
+  lastSig = sig;
+
+  static const char* const kMon[13] = {
+    "???","Jan","Feb","Mar","Apr","May","Jun",
+    "Jul","Aug","Sep","Oct","Nov","Dec"
+  };
+  static const char* const kDow[7] = {
+    "Sun","Mon","Tue","Wed","Thu","Fri","Sat"
+  };
+
+  uint8_t dow = deskDayOfWeek(t.year, t.month, t.day);
+  uint8_t mo  = (t.month >= 1 && t.month <= 12) ? t.month : 0;
+
+  // Build date part string.
+  char datePart[20];
+  switch (g_deskDateFmt) {
+    case 0:  // ISO:        2026-04-16
+      snprintf(datePart, sizeof(datePart), "%04d-%02d-%02d",
+               t.year, t.month, t.day);
+      break;
+    case 1:  // ISO+day:    Thu 2026-04-16
+      snprintf(datePart, sizeof(datePart), "%s %04d-%02d-%02d",
+               kDow[dow], t.year, t.month, t.day);
+      break;
+    case 2:  // US:         Apr 16, 2026
+      snprintf(datePart, sizeof(datePart), "%s %02d, %04d",
+               kMon[mo], t.day, t.year);
+      break;
+    case 3:  // US+day:     Thu Apr 16 2026
+      snprintf(datePart, sizeof(datePart), "%s %s %02d %04d",
+               kDow[dow], kMon[mo], t.day, t.year);
+      break;
+    case 4:  // EU+day:     Thu 16 Apr 2026
+    default:
+      snprintf(datePart, sizeof(datePart), "%s %02d %s %04d",
+               kDow[dow], t.day, kMon[mo], t.year);
+      break;
+  }
+
+  // Build time part string.
+  char timePart[14];
+  if (g_deskIs12H) {
+    uint8_t hh = t.hour % 12;
+    if (hh == 0) hh = 12;
+    snprintf(timePart, sizeof(timePart), "%02d:%02d:%02d %s",
+             hh, t.minute, t.second, t.hour < 12 ? "AM" : "PM");
+  } else {
+    snprintf(timePart, sizeof(timePart), "%02d:%02d:%02d",
+             t.hour, t.minute, t.second);
+  }
+
+  // Center both lines.
+  char line1[LCD_BUF_SIZE], line2[LCD_BUF_SIZE];
+  deskCenterLine(line1, datePart);
+  deskCenterLine(line2, timePart);
+
+  lcd.setCursor(0, 0);
+  lcd.print(line1);
+  lcd.setCursor(0, 1);
+  lcd.print(line2);
 }
 
 // ===== Mode Dispatcher =====
@@ -578,49 +674,48 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
 
   if (mode == MODE_UTC_ONLY) {
     if (event == BUTTON_ENC_LONG) {
-      // Start time edit mode - use current MCU time (which is GPS-synced or manually set)
       TimeEdit_t currentTime = mcuTimeGetCurrent();
       timeEditStart(&currentTime);
     } else if (event == BUTTON_ENC_SHORT && timeEditIsActive()) {
-      // Move to next field in edit mode
       timeEditButtonPress();
     }
   } else if (mode == MODE_UTC_LOCAL) {
     if (event == BUTTON_ENC_LONG) {
-      // Start offset edit mode
       int8_t currentOffset = getUTCOffset();
       offsetEditStart(currentOffset);
     } else if (event == BUTTON_ENC_SHORT && offsetEditIsActive()) {
-      // Exit offset edit mode and save
       offsetEditStop();
     }
   } else if (mode == MODE_STOPWATCH) {
     if (event == BUTTON_ENC_SHORT) {
-      // Toggle selected stopwatch (SW1 <-> SW2)
       stopwatchToggleSelected();
     } else if (event == BUTTON_RIGHT_SHORT) {
-      // Right button controls selected stopwatch start/stop
       stopwatchStartStopToggle(stopwatchGetSelected());
     } else if (event == BUTTON_LEFT_SHORT) {
-      // Left button resets selected stopwatch
       stopwatchReset(stopwatchGetSelected());
     }
   } else if (mode == MODE_TIMER) {
     if (event == BUTTON_ENC_LONG) {
-      // Enter HH:MM:SS edit mode for selected timer (when stopped)
       timerEditStart(timerGetSelected());
     } else if (event == BUTTON_ENC_SHORT && timerEditIsActive()) {
-      // Advance edit field HH -> MM -> SS -> save+start
       timerEditButtonPress();
     } else if (event == BUTTON_ENC_SHORT) {
-      // Toggle selected timer (T1 <-> T2)
       timerToggleSelected();
     } else if (event == BUTTON_RIGHT_SHORT) {
-      // Right button controls selected timer start/stop
       timerStartStopToggle(timerGetSelected());
     } else if (event == BUTTON_LEFT_SHORT) {
-      // Left button resets selected timer to channel default
       timerReset(timerGetSelected());
+    }
+  } else if (mode == MODE_LOCAL_ONLY) {
+    if (event == BUTTON_LEFT_SHORT) {
+      g_deskDateFmt = (g_deskDateFmt + 1) % 5;
+      g_modeEpoch++;
+    } else if (event == BUTTON_RIGHT_SHORT) {
+      g_deskIs12H = !g_deskIs12H;
+      g_modeEpoch++;
+    } else if (event == BUTTON_ENC_SHORT) {
+      g_deskShowUTC = !g_deskShowUTC;
+      g_modeEpoch++;
     }
   }
 }

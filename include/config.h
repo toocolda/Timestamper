@@ -64,4 +64,4 @@
 #define MODE_NAME_2 "Timestamp"
 #define MODE_NAME_3 "Stopwatch"
 #define MODE_NAME_4 "Timer"
-#define MODE_NAME_5 "Local Only"
+#define MODE_NAME_5 "Desk Mode"
