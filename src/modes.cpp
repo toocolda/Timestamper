@@ -17,6 +17,9 @@ extern TinyGPSPlus gps;
 // ===== Buzzer Pin =====
 #define BUZZER PIN_BUZZER
 
+// ===== Backlight Control =====
+#include "backlight.h"
+
 // ===== Global Mode Variables =====
 uint8_t g_currentMode = MODE_UTC_ONLY;
 uint32_t g_modeEpoch = 1;  // Start at 1 so first display triggers a clear and resets all caches
@@ -814,6 +817,7 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
   if (event == BUTTON_TOP_LONG) {
     TimeEdit_t now = mcuTimeGetCurrent();
     timestampStoreAdd(&now);
+    backlightTriggerTimestamp();
     g_tsSelectedNewest = 0;   // Snap view to the latest stamp.
     if (timerAnyAlarmActive()) {
       timerAcknowledgeAllAlarms();

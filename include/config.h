@@ -35,6 +35,7 @@
 #define PIN_BTN_RIGHT 6
 #define PIN_BTN_TOP 7
 #define PIN_BUZZER 9
+#define PIN_BACKLIGHT 10
 
 // ===== GPS =====
 #define GPS_BAUD 9600

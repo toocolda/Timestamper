@@ -10,6 +10,7 @@
 #include "local_time.h"
 #include "stopwatch.h"
 #include "timer_mode.h"
+#include "backlight.h"
 
 // ===== LCD =====
 ST7036 lcd(LCD_ADDR);
@@ -59,6 +60,7 @@ void setup() {
   pinMode(BTN_RIGHT, INPUT_PULLUP);
   pinMode(BTN_TOP, INPUT_PULLUP);
   pinMode(BUZZER, OUTPUT);
+  backlightInit(PIN_BACKLIGHT);
 
   lastState = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
 
@@ -74,6 +76,7 @@ void setup() {
 void loop() {
   // ===== Background Timing Engines =====
   timerModeUpdate();
+  backlightUpdate();
 
   // ===== Read GPS =====
   while (Serial.available()) {
