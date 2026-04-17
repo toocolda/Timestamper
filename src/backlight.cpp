@@ -4,11 +4,14 @@
 
 // ===== Backlight Configuration =====
 static const uint16_t kBacklightBlinkHalfPeriodMs = 200;   // 200ms on, 200ms off
-static const uint16_t kTimestampBlinkDurationMs = 2000;    // 2s confirmation blink
+static const uint16_t kTimestampBlinkDurationMs    = 2000;  // 2s confirmation blink
+static const uint32_t kManualAutoOffMs             = 30000; // 30s manual auto-off
 
 // ===== Module State =====
-static uint8_t s_backlightPin = 0;
-static uint32_t s_timestampBlinkUntilMs = 0;
+static uint8_t  s_backlightPin           = 0;
+static uint32_t s_timestampBlinkUntilMs  = 0;
+static bool     s_manualOn               = false;
+static uint32_t s_manualOnUntilMs        = 0;
 
 // ===== Initialize backlight on specified pin =====
 void backlightInit(uint8_t pin) {
@@ -35,13 +38,19 @@ void backlightUpdate() {
     shouldBlink = true;
   }
   
-  // Apply blink pattern if we should blink
+  // Expire manual-on if auto-off time has passed
+  if (s_manualOn && now >= s_manualOnUntilMs) {
+    s_manualOn = false;
+  }
+
+  // Apply blink pattern if we should blink (alarm / timestamp take priority)
   if (shouldBlink) {
     uint32_t blinkCycle = now % (2UL * kBacklightBlinkHalfPeriodMs);
     bool isOn = (blinkCycle < kBacklightBlinkHalfPeriodMs);
     digitalWrite(s_backlightPin, isOn ? HIGH : LOW);
+  } else if (s_manualOn) {
+    digitalWrite(s_backlightPin, HIGH);
   } else {
-    // Not blinking, turn off
     digitalWrite(s_backlightPin, LOW);
   }
 }
@@ -53,8 +62,19 @@ void backlightTriggerTimestamp() {
   s_timestampBlinkUntilMs = now + kTimestampBlinkDurationMs;
 }
 
+// ===== Toggle manual backlight on/off (with 30s auto-off when turned on) =====
+void backlightToggle() {
+  if (s_backlightPin == 0) return;
+  if (s_manualOn) {
+    s_manualOn = false;
+  } else {
+    s_manualOn = true;
+    s_manualOnUntilMs = millis() + kManualAutoOffMs;
+  }
+}
+
 // ===== Query if backlight is currently active =====
 bool backlightIsActive() {
   uint32_t now = millis();
-  return (timerAnyAlarmActive() || now < s_timestampBlinkUntilMs);
+  return (s_manualOn || timerAnyAlarmActive() || now < s_timestampBlinkUntilMs);
 }

@@ -29,6 +29,12 @@ void backlightUpdate(void);
 void backlightTriggerTimestamp(void);
 
 /**
+ * Toggle backlight on/off manually.
+ * When toggled on, auto-off fires after 30 seconds of no further toggle.
+ */
+void backlightToggle(void);
+
+/**
  * Check if backlight is currently active/blinking
  * @return true if timer alarm or timestamp blink is active
  */

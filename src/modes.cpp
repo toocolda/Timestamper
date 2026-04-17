@@ -820,6 +820,12 @@ void updateDisplay(uint8_t mode) {
 
 // ===== Mode Event Handler =====
 void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
+  // Global backlight toggle (short press) in all modes.
+  if (event == BUTTON_TOP_SHORT) {
+    backlightToggle();
+    return;
+  }
+
   // Global timestamp capture in all modes.
   if (event == BUTTON_TOP_LONG) {
     TimeEdit_t now = mcuTimeGetCurrent();
