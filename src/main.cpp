@@ -1,17 +1,23 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <TinyGPS++.h>
-#include "st7036.h"
-#include "config.h"
-#include "modes.h"
-#include "buttons.h"
-#include "time_edit.h"
-#include "mcu_time.h"
-#include "local_time.h"
-#include "stopwatch.h"
-#include "timer_mode.h"
-#include "backlight.h"
-#include "battery.h"
+#include "display/st7036.h"
+#include "core/config.h"
+#include "core/modes.h"
+#include "hardware/buttons.h"
+#include "time/time_edit.h"
+#include "time/mcu_time.h"
+#include "time/local_time.h"
+#include "features/stopwatch.h"
+#include "features/timer.h"
+#include "hardware/backlight.h"
+#include "hardware/battery.h"
+
+// Runtime architecture (main loop):
+// 1) Run background engines (timer/backlight/battery)
+// 2) Poll GPS stream and button events
+// 3) Route encoder to active context (editor, timestamp scroll, or mode select)
+// 4) Render display at adaptive refresh rate
 
 // ===== LCD =====
 ST7036 lcd(LCD_ADDR);
@@ -76,10 +82,10 @@ void setup() {
 
 // ===== Loop =====
 void loop() {
-  // ===== Background Timing Engines =====
+  // ===== Background Engines =====
   timerModeUpdate();
   backlightUpdate();
-  // Only read ADC battery in UTC-only mode to save power
+  // Battery is only shown in UTC-only mode, so avoid unnecessary ADC reads elsewhere.
   if (g_currentMode == MODE_UTC_ONLY) {
     batteryUpdate();
   }
@@ -209,8 +215,8 @@ void loop() {
     }
   }
 
-  // ===== Update Display (adaptive throttle) =====
-  // Stopwatch needs 0.1s visual resolution.
+  // ===== Display Update (adaptive throttle) =====
+  // Stopwatch/timer activity gets faster refresh for smoother motion.
   uint16_t refreshMs = 200;
   if (g_currentMode == MODE_STOPWATCH || stopwatchAnyRunning() ||
       g_currentMode == MODE_TIMER || timerAnyRunning() || timerAnyAlarmActive()) {

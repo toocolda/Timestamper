@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "stopwatch.h"
+#include "features/stopwatch.h"
 
 // 99:59:59.9 in 0.1s units
 static const uint32_t kMaxTenths = 3599999UL;

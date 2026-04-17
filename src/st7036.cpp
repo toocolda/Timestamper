@@ -1,4 +1,4 @@
-#include "st7036.h"
+#include "display/st7036.h"
 
 ST7036::ST7036(uint8_t addr) : _addr(addr) {}
 

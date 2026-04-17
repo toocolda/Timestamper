@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include "config.h"
-#include "buttons.h"
+#include "core/config.h"
+#include "hardware/buttons.h"
 
 // ===== Button Configuration =====
 #define LONG_PRESS_TIME_MS 500  // Time to consider a press as "long"

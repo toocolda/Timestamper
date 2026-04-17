@@ -1,4 +1,4 @@
-#include "timestamp_store.h"
+#include "features/timestamp.h"
 
 #include <EEPROM.h>
 

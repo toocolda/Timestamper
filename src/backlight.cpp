@@ -1,29 +1,26 @@
-#include "backlight.h"
+#include "hardware/backlight.h"
 #include <Arduino.h>
-#include "timer_mode.h"
+#include "features/timer.h"
 
 // ===== Backlight Configuration =====
-#define BACKLIGHT_BLINK_MS 200  // Half-period of blink (200ms on, 200ms off = 400ms cycle)
-#define TIMESTAMP_BLINK_DURATION_MS 2000  // Blink for 2 seconds after timestamp
+static const uint16_t kBacklightBlinkHalfPeriodMs = 200;   // 200ms on, 200ms off
+static const uint16_t kTimestampBlinkDurationMs = 2000;    // 2s confirmation blink
 
 // ===== Module State =====
-static uint8_t g_backlightPin = 0;
-static uint32_t g_timestampBlinkEndTime = 0;
-
-// ===== Private Helper: Check if timer alarm is active =====
-extern bool timerAnyAlarmActive();
+static uint8_t s_backlightPin = 0;
+static uint32_t s_timestampBlinkUntilMs = 0;
 
 // ===== Initialize backlight on specified pin =====
 void backlightInit(uint8_t pin) {
-  g_backlightPin = pin;
+  s_backlightPin = pin;
   pinMode(pin, OUTPUT);
   digitalWrite(pin, LOW);  // Start with backlight off
-  g_timestampBlinkEndTime = 0;
+  s_timestampBlinkUntilMs = 0;
 }
 
 // ===== Update backlight state with blinking logic =====
 void backlightUpdate() {
-  if (g_backlightPin == 0) return;  // Not initialized
+  if (s_backlightPin == 0) return;  // Not initialized
 
   uint32_t now = millis();
   bool shouldBlink = false;
@@ -34,30 +31,30 @@ void backlightUpdate() {
   }
   
   // Check if we're still in timestamp blink window
-  if (now < g_timestampBlinkEndTime) {
+  if (now < s_timestampBlinkUntilMs) {
     shouldBlink = true;
   }
   
   // Apply blink pattern if we should blink
   if (shouldBlink) {
-    uint32_t blinkCycle = now % (2 * BACKLIGHT_BLINK_MS);
-    bool isOn = (blinkCycle < BACKLIGHT_BLINK_MS);
-    digitalWrite(g_backlightPin, isOn ? HIGH : LOW);
+    uint32_t blinkCycle = now % (2UL * kBacklightBlinkHalfPeriodMs);
+    bool isOn = (blinkCycle < kBacklightBlinkHalfPeriodMs);
+    digitalWrite(s_backlightPin, isOn ? HIGH : LOW);
   } else {
     // Not blinking, turn off
-    digitalWrite(g_backlightPin, LOW);
+    digitalWrite(s_backlightPin, LOW);
   }
 }
 
 // ===== Trigger timestamp blink (call when timestamp is captured) =====
 void backlightTriggerTimestamp() {
-  if (g_backlightPin == 0) return;  // Not initialized
+  if (s_backlightPin == 0) return;  // Not initialized
   uint32_t now = millis();
-  g_timestampBlinkEndTime = now + TIMESTAMP_BLINK_DURATION_MS;
+  s_timestampBlinkUntilMs = now + kTimestampBlinkDurationMs;
 }
 
 // ===== Query if backlight is currently active =====
 bool backlightIsActive() {
   uint32_t now = millis();
-  return (timerAnyAlarmActive() || now < g_timestampBlinkEndTime);
+  return (timerAnyAlarmActive() || now < s_timestampBlinkUntilMs);
 }

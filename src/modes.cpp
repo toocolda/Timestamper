@@ -1,14 +1,22 @@
 #include <Arduino.h>
-#include "st7036.h"
-#include "config.h"
 #include <TinyGPS++.h>
-#include "time_edit.h"
-#include "mcu_time.h"
-#include "local_time.h"
-#include "stopwatch.h"
-#include "timer_mode.h"
-#include "timestamp_store.h"
-#include "buttons.h"
+
+#include "hardware/backlight.h"
+#include "hardware/battery.h"
+#include "hardware/buttons.h"
+#include "core/config.h"
+#include "time/local_time.h"
+#include "time/mcu_time.h"
+#include "display/st7036.h"
+#include "features/stopwatch.h"
+#include "time/time_edit.h"
+#include "features/timer.h"
+#include "features/timestamp.h"
+
+// Module architecture:
+// - Maintains mode-global UI state (selected mode + redraw epoch)
+// - Uses per-mode cache signatures to minimize LCD writes
+// - Owns button event routing for mode-specific behavior
 
 // Forward declarations from main.cpp
 extern ST7036 lcd;
@@ -16,12 +24,6 @@ extern TinyGPSPlus gps;
 
 // ===== Buzzer Pin =====
 #define BUZZER PIN_BUZZER
-
-// ===== Backlight Control =====
-#include "backlight.h"
-
-// ===== Battery Monitoring =====
-#include "battery.h"
 
 // ===== Global Mode Variables =====
 uint8_t g_currentMode = MODE_UTC_ONLY;
@@ -43,6 +45,36 @@ static void buzzTimestampStamp() {
   tone(BUZZER, 1175);
   delay(85);
   noTone(BUZZER);
+}
+
+// Build compact GPS status token used in the status line:
+// NO=no reliable date/time, FX=3D fix, AC=acquiring, TI=time-only input/no sats.
+static void buildGpsStatus(char out[3], bool timeReliable, int satCount) {
+  if (!timeReliable) {
+    strcpy(out, "NO");
+  } else if (gps.location.isValid()) {
+    strcpy(out, "FX");
+  } else if (satCount > 0) {
+    strcpy(out, "AC");
+  } else {
+    strcpy(out, "TI");
+  }
+}
+
+// Keep MCU clock disciplined to GPS when valid, unless manual-set grace period is active.
+static void syncMcuFromGpsIfAllowed(bool timeReliable) {
+  if (!timeReliable || shouldSkipGPSSync()) {
+    return;
+  }
+
+  TimeEdit_t gpsTime;
+  gpsTime.year = gps.date.year();
+  gpsTime.month = gps.date.month();
+  gpsTime.day = gps.date.day();
+  gpsTime.hour = gps.time.hour();
+  gpsTime.minute = gps.time.minute();
+  gpsTime.second = gps.time.second();
+  mcuTimeSync(&gpsTime);
 }
 
 // ===== GPS Validation Helper =====
@@ -171,16 +203,9 @@ void displayModeUTCOnly() {
     // Show GPS status on line 2 as hint (blinking field is visual hint)
     lcd.setCursor(0, 1);
     int sat = gps.satellites.value();
+    bool timeReliable = isGPSTimeReliable();
     char gpsStatus[3];
-    if (!isGPSTimeReliable()) {
-      strcpy(gpsStatus, "NO");
-    } else if (gps.location.isValid()) {
-      strcpy(gpsStatus, "FX");
-    } else if (sat > 0) {
-      strcpy(gpsStatus, "AC");
-    } else {
-      strcpy(gpsStatus, "TI");
-    }
+    buildGpsStatus(gpsStatus, timeReliable, sat);
     uint8_t batPercent = batteryGetPercentage();
     snprintf(buf, LCD_BUF_SIZE, "GPS:%s SAT:%02d BAT:%02d", gpsStatus, sat, batPercent);
     lcd.print(buf);
@@ -195,16 +220,7 @@ void displayModeUTCOnly() {
     // GPS SYNC: Every display update, if GPS is valid, MCU time syncs to GPS
     // (see line ~168 in modes.cpp, displayModeUTCOnly function)
     // BUT: Skip GPS sync if manual time was just set (5 second grace period)
-    if (timeValid && !shouldSkipGPSSync()) {
-      TimeEdit_t gpsTime;
-      gpsTime.year = gps.date.year();
-      gpsTime.month = gps.date.month();
-      gpsTime.day = gps.date.day();
-      gpsTime.hour = gps.time.hour();
-      gpsTime.minute = gps.time.minute();
-      gpsTime.second = gps.time.second();
-      mcuTimeSync(&gpsTime);
-    }
+    syncMcuFromGpsIfAllowed(timeValid);
     
     // Get current time from MCU (ticks based on elapsed ms)
     TimeEdit_t currentTime = mcuTimeGetCurrent();
@@ -213,15 +229,7 @@ void displayModeUTCOnly() {
     int s = currentTime.second;
     
     char gpsStatus[3];
-    if (!isGPSTimeReliable()) {
-      strcpy(gpsStatus, "NO");
-    } else if (gps.location.isValid()) {
-      strcpy(gpsStatus, "FX");
-    } else if (sat > 0) {
-      strcpy(gpsStatus, "AC");
-    } else {
-      strcpy(gpsStatus, "TI");
-    }
+    buildGpsStatus(gpsStatus, timeValid, sat);
     
     if (s != lastSec || sat != lastSat || timeValid != lastTimeValid) {
       lcd.setCursor(0, 0);
@@ -290,16 +298,7 @@ void displayModeUTCLocal() {
   }
 
   bool timeValid = isGPSTimeReliable();
-  if (timeValid && !shouldSkipGPSSync()) {
-    TimeEdit_t gpsTime;
-    gpsTime.year = gps.date.year();
-    gpsTime.month = gps.date.month();
-    gpsTime.day = gps.date.day();
-    gpsTime.hour = gps.time.hour();
-    gpsTime.minute = gps.time.minute();
-    gpsTime.second = gps.time.second();
-    mcuTimeSync(&gpsTime);
-  }
+  syncMcuFromGpsIfAllowed(timeValid);
   
   if (offsetEditMode) {
     // ===== OFFSET EDIT DISPLAY =====
@@ -374,32 +373,34 @@ void displayModeUTCLocal() {
 }
 
 // ===== Mode: Timestamp Review =====
-static bool g_tsScrollActive = false;
-static bool g_tsConfirmDeleteAll = false;
-static uint8_t g_tsSelectedNewest = 0;  // 0 = newest
-static bool g_tsShowLocal = false;      // false=UTC, true=Local
-static uint32_t g_tsDeleteAnimUntil = 0;
+static bool s_tsScrollActive = false;
+static bool s_tsConfirmDeleteAll = false;
+static uint8_t s_tsSelectedNewest = 0;  // 0 = newest
+static bool s_tsShowLocal = false;      // false=UTC, true=Local
+static uint32_t s_tsDeleteAnimUntil = 0;
+static const uint16_t kTsScrollBlinkMs = 300;
+static const uint16_t kTsDeleteCueMs = 700;
 
 bool timestampModeIsScrollActive() {
-  return g_tsScrollActive;
+  return s_tsScrollActive;
 }
 
 void timestampModeScrollBy(int32_t delta) {
-  if (!g_tsScrollActive || delta == 0) return;
+  if (!s_tsScrollActive || delta == 0) return;
 
   uint8_t count = timestampStoreCount();
   if (count == 0) {
-    g_tsSelectedNewest = 0;
+    s_tsSelectedNewest = 0;
     return;
   }
 
-  int16_t idx = (int16_t)g_tsSelectedNewest + (int16_t)delta;
+  int16_t idx = (int16_t)s_tsSelectedNewest + (int16_t)delta;
   if (idx < 0) idx = 0;
   if (idx > (int16_t)count - 1) idx = (int16_t)count - 1;
 
   uint8_t next = (uint8_t)idx;
-  if (next != g_tsSelectedNewest) {
-    g_tsSelectedNewest = next;
+  if (next != s_tsSelectedNewest) {
+    s_tsSelectedNewest = next;
     g_modeEpoch++;
   }
 }
@@ -430,30 +431,30 @@ void displayModeTimestampReview() {
   }
 
   uint8_t count = timestampStoreCount();
-  if (count == 0) g_tsSelectedNewest = 0;
-  else if (g_tsSelectedNewest >= count) g_tsSelectedNewest = (uint8_t)(count - 1);
+  if (count == 0) s_tsSelectedNewest = 0;
+  else if (s_tsSelectedNewest >= count) s_tsSelectedNewest = (uint8_t)(count - 1);
 
   bool markerVisible = true;
-  if (g_tsScrollActive) {
-    markerVisible = ((millis() / 300UL) % 2UL) == 0UL;
+  if (s_tsScrollActive) {
+    markerVisible = ((millis() / (uint32_t)kTsScrollBlinkMs) % 2UL) == 0UL;
   }
 
-  bool deleteAnimActive = millis() < g_tsDeleteAnimUntil;
+  bool deleteAnimActive = millis() < s_tsDeleteAnimUntil;
 
   uint32_t sig = ((uint32_t)count)
-               | ((uint32_t)g_tsSelectedNewest << 8)
-               | ((uint32_t)g_tsScrollActive << 16)
-               | ((uint32_t)g_tsConfirmDeleteAll << 17)
-               | ((uint32_t)g_tsShowLocal << 18)
+               | ((uint32_t)s_tsSelectedNewest << 8)
+               | ((uint32_t)s_tsScrollActive << 16)
+               | ((uint32_t)s_tsConfirmDeleteAll << 17)
+               | ((uint32_t)s_tsShowLocal << 18)
                | ((uint32_t)markerVisible << 19)
                | ((uint32_t)deleteAnimActive << 20);
 
   TimeEdit_t t0 = {0, 0, 0, 0, 0, 0};
   TimeEdit_t t1 = {0, 0, 0, 0, 0, 0};
-  bool hasSelected = timestampStoreGetByNewest(g_tsSelectedNewest, &t0);
+  bool hasSelected = timestampStoreGetByNewest(s_tsSelectedNewest, &t0);
   bool hasSecond = false;
-  if (count >= 2 && (g_tsSelectedNewest + 1U) < count) {
-    hasSecond = timestampStoreGetByNewest((uint8_t)(g_tsSelectedNewest + 1U), &t1);
+  if (count >= 2 && (s_tsSelectedNewest + 1U) < count) {
+    hasSecond = timestampStoreGetByNewest((uint8_t)(s_tsSelectedNewest + 1U), &t1);
   }
 
   if (hasSelected) {
@@ -474,7 +475,7 @@ void displayModeTimestampReview() {
   if (sig == lastSig) return;
   lastSig = sig;
 
-  if (g_tsConfirmDeleteAll) {
+  if (s_tsConfirmDeleteAll) {
     lcd.setCursor(0, 0);
     lcd.print(" Delete ALL stamps? ");
     lcd.setCursor(0, 1);
@@ -493,8 +494,8 @@ void displayModeTimestampReview() {
     return;
   }
 
-  bool hasNewerAbove = (g_tsSelectedNewest > 0U);
-  bool hasOlderBelow = (g_tsSelectedNewest + 2U < count);
+  bool hasNewerAbove = (s_tsSelectedNewest > 0U);
+  bool hasOlderBelow = (s_tsSelectedNewest + 2U < count);
   char upArrow = hasNewerAbove ? '^' : ' ';
   char downArrow = hasOlderBelow ? 'v' : ' ';
   char marker = markerVisible ? '>' : ' ';
@@ -504,16 +505,16 @@ void displayModeTimestampReview() {
 
   lcd.setCursor(0, 0);
   char line1[LCD_BUF_SIZE];
-  formatTimestampLine(line1, marker, (uint8_t)(g_tsSelectedNewest + 1U), &t0, g_tsShowLocal, upArrow);
+  formatTimestampLine(line1, marker, (uint8_t)(s_tsSelectedNewest + 1U), &t0, s_tsShowLocal, upArrow);
   lcd.print(line1);
 
   lcd.setCursor(0, 1);
   char line2[LCD_BUF_SIZE];
   if (hasSecond) {
-    formatTimestampLine(line2, ' ', (uint8_t)(g_tsSelectedNewest + 2U), &t1, g_tsShowLocal, downArrow);
+    formatTimestampLine(line2, ' ', (uint8_t)(s_tsSelectedNewest + 2U), &t1, s_tsShowLocal, downArrow);
   } else {
     snprintf(line2, LCD_BUF_SIZE, " 00 -- -- --:--:--%c%c",
-             g_tsShowLocal ? 'L' : 'Z', downArrow);
+             s_tsShowLocal ? 'L' : 'Z', downArrow);
   }
   lcd.print(line2);
 }
@@ -682,9 +683,10 @@ void displayModeTimer() {
 }
 
 // ===== Desk Mode (Local Only) State =====
-static uint8_t g_deskDateFmt  = 0;    // 0=ISO  1=ISO+day  2=US  3=US+day  4=EU+day
-static bool    g_deskIs12H    = false;
-static bool    g_deskShowUTC  = false;
+static uint8_t s_deskDateFmt  = 0;    // 0=ISO  1=ISO+day  2=US  3=US+day  4=EU+day
+static bool    s_deskIs12H    = false;
+static bool    s_deskShowUtc  = false;
+static const uint8_t kDeskDateFormatCount = 5;
 
 // Center a string into a 20-char null-terminated buffer.
 static void deskCenterLine(char* buf, const char* s) {
@@ -714,7 +716,7 @@ void displayModeLocalOnly() {
   }
 
   TimeEdit_t utc = mcuTimeGetCurrent();
-  TimeEdit_t t   = g_deskShowUTC ? utc : calculateLocalTime(utc);
+  TimeEdit_t t   = s_deskShowUtc ? utc : calculateLocalTime(utc);
 
   // Compact signature across all displayed state.
   uint32_t sig = (uint32_t)t.second
@@ -723,9 +725,9 @@ void displayModeLocalOnly() {
                | ((uint32_t)t.day     << 18)
                | ((uint32_t)t.month   << 24);
   sig ^= (uint32_t)t.year;
-  sig ^= ((uint32_t)g_deskDateFmt << 28);
-  sig ^= ((uint32_t)g_deskIs12H   << 1);
-  sig ^= ((uint32_t)g_deskShowUTC << 2);
+  sig ^= ((uint32_t)s_deskDateFmt << 28);
+  sig ^= ((uint32_t)s_deskIs12H   << 1);
+  sig ^= ((uint32_t)s_deskShowUtc << 2);
 
   if (sig == lastSig) return;
   lastSig = sig;
@@ -743,7 +745,7 @@ void displayModeLocalOnly() {
 
   // Build date part string.
   char datePart[20];
-  switch (g_deskDateFmt) {
+  switch (s_deskDateFmt) {
     case 0:  // ISO:        2026-04-16
       snprintf(datePart, sizeof(datePart), "%04d-%02d-%02d",
                t.year, t.month, t.day);
@@ -769,7 +771,7 @@ void displayModeLocalOnly() {
 
   // Build time part string.
   char timePart[14];
-  if (g_deskIs12H) {
+  if (s_deskIs12H) {
     uint8_t hh = t.hour % 12;
     if (hh == 0) hh = 12;
     snprintf(timePart, sizeof(timePart), "%02d:%02d:%02d %s",
@@ -823,7 +825,7 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     TimeEdit_t now = mcuTimeGetCurrent();
     timestampStoreAdd(&now);
     backlightTriggerTimestamp();
-    g_tsSelectedNewest = 0;   // Snap view to the latest stamp.
+    s_tsSelectedNewest = 0;   // Snap view to the latest stamp.
     if (timerAnyAlarmActive()) {
       timerAcknowledgeAllAlarms();
     }
@@ -853,39 +855,39 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
       offsetEditStop();
     }
   } else if (mode == MODE_TIMESTAMP_REVIEW) {
-    if (g_tsConfirmDeleteAll) {
+    if (s_tsConfirmDeleteAll) {
       if (event == BUTTON_LEFT_SHORT) {
-        g_tsConfirmDeleteAll = false;
+        s_tsConfirmDeleteAll = false;
         g_modeEpoch++;
       } else if (event == BUTTON_RIGHT_SHORT) {
         timestampStoreClearAll();
-        g_tsConfirmDeleteAll = false;
-        g_tsSelectedNewest = 0;
-        g_tsScrollActive = false;
+        s_tsConfirmDeleteAll = false;
+        s_tsSelectedNewest = 0;
+        s_tsScrollActive = false;
         g_modeEpoch++;
       }
       return;
     }
 
     if (event == BUTTON_ENC_SHORT) {
-      g_tsScrollActive = !g_tsScrollActive;
+      s_tsScrollActive = !s_tsScrollActive;
       g_modeEpoch++;
     } else if (event == BUTTON_RIGHT_SHORT) {
-      g_tsShowLocal = !g_tsShowLocal;
+      s_tsShowLocal = !s_tsShowLocal;
       g_modeEpoch++;
     } else if (event == BUTTON_LEFT_SHORT) {
-      if (g_tsScrollActive && timestampStoreDeleteByNewest(g_tsSelectedNewest)) {
+      if (s_tsScrollActive && timestampStoreDeleteByNewest(s_tsSelectedNewest)) {
         uint8_t count = timestampStoreCount();
         if (count == 0) {
-          g_tsSelectedNewest = 0;
-        } else if (g_tsSelectedNewest >= count) {
-          g_tsSelectedNewest = (uint8_t)(count - 1);
+          s_tsSelectedNewest = 0;
+        } else if (s_tsSelectedNewest >= count) {
+          s_tsSelectedNewest = (uint8_t)(count - 1);
         }
-        g_tsDeleteAnimUntil = millis() + 700UL;
+        s_tsDeleteAnimUntil = millis() + (uint32_t)kTsDeleteCueMs;
         g_modeEpoch++;
       }
     } else if (event == BUTTON_LEFT_LONG) {
-      g_tsConfirmDeleteAll = true;
+      s_tsConfirmDeleteAll = true;
       g_modeEpoch++;
     }
   } else if (mode == MODE_STOPWATCH) {
@@ -910,13 +912,13 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     }
   } else if (mode == MODE_LOCAL_ONLY) {
     if (event == BUTTON_LEFT_SHORT) {
-      g_deskDateFmt = (g_deskDateFmt + 1) % 5;
+      s_deskDateFmt = (s_deskDateFmt + 1) % kDeskDateFormatCount;
       g_modeEpoch++;
     } else if (event == BUTTON_RIGHT_SHORT) {
-      g_deskIs12H = !g_deskIs12H;
+      s_deskIs12H = !s_deskIs12H;
       g_modeEpoch++;
     } else if (event == BUTTON_ENC_SHORT) {
-      g_deskShowUTC = !g_deskShowUTC;
+      s_deskShowUtc = !s_deskShowUtc;
       g_modeEpoch++;
     }
   }

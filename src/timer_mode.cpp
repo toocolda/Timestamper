@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include "config.h"
-#include "timer_mode.h"
+#include "core/config.h"
+#include "features/timer.h"
 
 static const int32_t kMaxSeconds = 99L * 3600L + 59L * 60L + 59L;
 static const int32_t kDefaultPresetSeconds[2] = {60L, 120L};  // T1=1:00, T2=2:00
