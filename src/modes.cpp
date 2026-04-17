@@ -20,6 +20,9 @@ extern TinyGPSPlus gps;
 // ===== Backlight Control =====
 #include "backlight.h"
 
+// ===== Battery Monitoring =====
+#include "battery.h"
+
 // ===== Global Mode Variables =====
 uint8_t g_currentMode = MODE_UTC_ONLY;
 uint32_t g_modeEpoch = 1;  // Start at 1 so first display triggers a clear and resets all caches
@@ -178,7 +181,8 @@ void displayModeUTCOnly() {
     } else {
       strcpy(gpsStatus, "TI");
     }
-    snprintf(buf, LCD_BUF_SIZE, "GPS:%s SAT:%02d BAT:XX", gpsStatus, sat);
+    uint8_t batPercent = batteryGetPercentage();
+    snprintf(buf, LCD_BUF_SIZE, "GPS:%s SAT:%02d BAT:%02d", gpsStatus, sat, batPercent);
     lcd.print(buf);
     
   } else {
@@ -237,9 +241,10 @@ void displayModeUTCOnly() {
       
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
+      uint8_t batPercent = batteryGetPercentage();
       snprintf(buf2, LCD_BUF_SIZE,
-               "GPS:%s SAT:%02d BAT:XX",
-               gpsStatus, sat);
+               "GPS:%s SAT:%02d BAT:%02d",
+               gpsStatus, sat, batPercent);
       lcd.print(buf2);
       
       lastSec = s;

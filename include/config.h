@@ -37,6 +37,9 @@
 #define PIN_BUZZER 9
 #define PIN_BACKLIGHT 10
 
+// ===== ADC Pins =====
+#define PIN_BATTERY A0
+
 // ===== GPS =====
 #define GPS_BAUD 9600
 

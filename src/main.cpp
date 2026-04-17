@@ -11,6 +11,7 @@
 #include "stopwatch.h"
 #include "timer_mode.h"
 #include "backlight.h"
+#include "battery.h"
 
 // ===== LCD =====
 ST7036 lcd(LCD_ADDR);
@@ -61,6 +62,7 @@ void setup() {
   pinMode(BTN_TOP, INPUT_PULLUP);
   pinMode(BUZZER, OUTPUT);
   backlightInit(PIN_BACKLIGHT);
+  batteryInit(PIN_BATTERY);
 
   lastState = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
 
@@ -77,6 +79,10 @@ void loop() {
   // ===== Background Timing Engines =====
   timerModeUpdate();
   backlightUpdate();
+  // Only read ADC battery in UTC-only mode to save power
+  if (g_currentMode == MODE_UTC_ONLY) {
+    batteryUpdate();
+  }
 
   // ===== Read GPS =====
   while (Serial.available()) {
