@@ -7,6 +7,7 @@
 #include "local_time.h"
 #include "stopwatch.h"
 #include "timer_mode.h"
+#include "timestamp_store.h"
 #include "buttons.h"
 
 // Forward declarations from main.cpp
@@ -18,12 +19,23 @@ extern TinyGPSPlus gps;
 
 // ===== Global Mode Variables =====
 uint8_t g_currentMode = MODE_UTC_ONLY;
-uint32_t g_modeEpoch = 0;  // Increments every mode change
+uint32_t g_modeEpoch = 1;  // Start at 1 so first display triggers a clear and resets all caches
 
 // ===== Buzzer Control =====
 void buzzOnce(uint16_t durationMs) {
   tone(BUZZER, 1000);  // 1000 Hz tone
   delay(durationMs);
+  noTone(BUZZER);
+}
+
+static void buzzTimestampStamp() {
+  // Distinct two-tone stamp confirmation.
+  tone(BUZZER, 1760);
+  delay(55);
+  noTone(BUZZER);
+  delay(20);
+  tone(BUZZER, 1175);
+  delay(85);
   noTone(BUZZER);
 }
 
@@ -354,16 +366,148 @@ void displayModeUTCLocal() {
 }
 
 // ===== Mode: Timestamp Review =====
+static bool g_tsScrollActive = false;
+static bool g_tsConfirmDeleteAll = false;
+static uint8_t g_tsSelectedNewest = 0;  // 0 = newest
+static bool g_tsShowLocal = false;      // false=UTC, true=Local
+static uint32_t g_tsDeleteAnimUntil = 0;
+
+bool timestampModeIsScrollActive() {
+  return g_tsScrollActive;
+}
+
+void timestampModeScrollBy(int32_t delta) {
+  if (!g_tsScrollActive || delta == 0) return;
+
+  uint8_t count = timestampStoreCount();
+  if (count == 0) {
+    g_tsSelectedNewest = 0;
+    return;
+  }
+
+  int16_t idx = (int16_t)g_tsSelectedNewest + (int16_t)delta;
+  if (idx < 0) idx = 0;
+  if (idx > (int16_t)count - 1) idx = (int16_t)count - 1;
+
+  uint8_t next = (uint8_t)idx;
+  if (next != g_tsSelectedNewest) {
+    g_tsSelectedNewest = next;
+    g_modeEpoch++;
+  }
+}
+
+static void formatTimestampLine(char* out,
+                                char prefix,
+                                uint8_t number,
+                                const TimeEdit_t* utcStamp,
+                                bool showLocal,
+                                char navArrow) {
+  TimeEdit_t shown = showLocal ? calculateLocalTime(*utcStamp) : *utcStamp;
+  char tzSuffix = showLocal ? 'L' : 'Z';
+  snprintf(out, LCD_BUF_SIZE, "%c%02d %02d-%02d %02d:%02d:%02d%c%c",
+           prefix, number,
+           shown.month, shown.day,
+           shown.hour, shown.minute, shown.second,
+           tzSuffix, navArrow);
+}
+
 void displayModeTimestampReview() {
   static uint32_t lastEpoch = 0;
+  static uint32_t lastSig = 0xFFFFFFFFUL;
+
   if (lastEpoch != g_modeEpoch) {
     lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Timestamp Review");
-    lcd.setCursor(0, 1);
-    lcd.print("Coming Soon...");
     lastEpoch = g_modeEpoch;
+    lastSig = 0xFFFFFFFFUL;
   }
+
+  uint8_t count = timestampStoreCount();
+  if (count == 0) g_tsSelectedNewest = 0;
+  else if (g_tsSelectedNewest >= count) g_tsSelectedNewest = (uint8_t)(count - 1);
+
+  bool markerVisible = true;
+  if (g_tsScrollActive) {
+    markerVisible = ((millis() / 300UL) % 2UL) == 0UL;
+  }
+
+  bool deleteAnimActive = millis() < g_tsDeleteAnimUntil;
+
+  uint32_t sig = ((uint32_t)count)
+               | ((uint32_t)g_tsSelectedNewest << 8)
+               | ((uint32_t)g_tsScrollActive << 16)
+               | ((uint32_t)g_tsConfirmDeleteAll << 17)
+               | ((uint32_t)g_tsShowLocal << 18)
+               | ((uint32_t)markerVisible << 19)
+               | ((uint32_t)deleteAnimActive << 20);
+
+  TimeEdit_t t0 = {0, 0, 0, 0, 0, 0};
+  TimeEdit_t t1 = {0, 0, 0, 0, 0, 0};
+  bool hasSelected = timestampStoreGetByNewest(g_tsSelectedNewest, &t0);
+  bool hasSecond = false;
+  if (count >= 2 && (g_tsSelectedNewest + 1U) < count) {
+    hasSecond = timestampStoreGetByNewest((uint8_t)(g_tsSelectedNewest + 1U), &t1);
+  }
+
+  if (hasSelected) {
+    sig ^= (uint32_t)t0.second;
+    sig ^= (uint32_t)t0.minute << 6;
+    sig ^= (uint32_t)t0.hour << 12;
+    sig ^= (uint32_t)t0.day << 17;
+    sig ^= (uint32_t)t0.month << 22;
+  }
+  if (hasSecond) {
+    sig ^= (uint32_t)t1.second << 1;
+    sig ^= (uint32_t)t1.minute << 7;
+    sig ^= (uint32_t)t1.hour << 13;
+    sig ^= (uint32_t)t1.day << 18;
+    sig ^= (uint32_t)t1.month << 23;
+  }
+
+  if (sig == lastSig) return;
+  lastSig = sig;
+
+  if (g_tsConfirmDeleteAll) {
+    lcd.setCursor(0, 0);
+    lcd.print(" Delete ALL stamps? ");
+    lcd.setCursor(0, 1);
+    lcd.print(" L:Cancel R:Delete ");
+    return;
+  }
+
+  if (!hasSelected) {
+    char marker = markerVisible ? '>' : ' ';
+    lcd.setCursor(0, 0);
+    char line1[LCD_BUF_SIZE];
+    snprintf(line1, LCD_BUF_SIZE, "%c00 -- -- --:--:--Z ", marker);
+    lcd.print(line1);
+    lcd.setCursor(0, 1);
+    lcd.print(" 00 -- -- --:--:-- ");
+    return;
+  }
+
+  bool hasNewerAbove = (g_tsSelectedNewest > 0U);
+  bool hasOlderBelow = (g_tsSelectedNewest + 2U < count);
+  char upArrow = hasNewerAbove ? '^' : ' ';
+  char downArrow = hasOlderBelow ? 'v' : ' ';
+  char marker = markerVisible ? '>' : ' ';
+  if (deleteAnimActive) {
+    marker = '+';  // Brief visual cue that a new line moved into current slot.
+  }
+
+  lcd.setCursor(0, 0);
+  char line1[LCD_BUF_SIZE];
+  formatTimestampLine(line1, marker, (uint8_t)(g_tsSelectedNewest + 1U), &t0, g_tsShowLocal, upArrow);
+  lcd.print(line1);
+
+  lcd.setCursor(0, 1);
+  char line2[LCD_BUF_SIZE];
+  if (hasSecond) {
+    formatTimestampLine(line2, ' ', (uint8_t)(g_tsSelectedNewest + 2U), &t1, g_tsShowLocal, downArrow);
+  } else {
+    snprintf(line2, LCD_BUF_SIZE, " 00 -- -- --:--:--%c%c",
+             g_tsShowLocal ? 'L' : 'Z', downArrow);
+  }
+  lcd.print(line2);
 }
 
 // ===== Mode: Stopwatch =====
@@ -666,6 +810,19 @@ void updateDisplay(uint8_t mode) {
 
 // ===== Mode Event Handler =====
 void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
+  // Global timestamp capture in all modes.
+  if (event == BUTTON_TOP_LONG) {
+    TimeEdit_t now = mcuTimeGetCurrent();
+    timestampStoreAdd(&now);
+    g_tsSelectedNewest = 0;   // Snap view to the latest stamp.
+    if (timerAnyAlarmActive()) {
+      timerAcknowledgeAllAlarms();
+    }
+    buzzTimestampStamp();
+    g_modeEpoch++;
+    return;
+  }
+
   // Any button acknowledges active timer alarms and consumes the event.
   if (event != BUTTON_NONE && timerAnyAlarmActive()) {
     timerAcknowledgeAllAlarms();
@@ -685,6 +842,42 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
       offsetEditStart(currentOffset);
     } else if (event == BUTTON_ENC_SHORT && offsetEditIsActive()) {
       offsetEditStop();
+    }
+  } else if (mode == MODE_TIMESTAMP_REVIEW) {
+    if (g_tsConfirmDeleteAll) {
+      if (event == BUTTON_LEFT_SHORT) {
+        g_tsConfirmDeleteAll = false;
+        g_modeEpoch++;
+      } else if (event == BUTTON_RIGHT_SHORT) {
+        timestampStoreClearAll();
+        g_tsConfirmDeleteAll = false;
+        g_tsSelectedNewest = 0;
+        g_tsScrollActive = false;
+        g_modeEpoch++;
+      }
+      return;
+    }
+
+    if (event == BUTTON_ENC_SHORT) {
+      g_tsScrollActive = !g_tsScrollActive;
+      g_modeEpoch++;
+    } else if (event == BUTTON_RIGHT_SHORT) {
+      g_tsShowLocal = !g_tsShowLocal;
+      g_modeEpoch++;
+    } else if (event == BUTTON_LEFT_SHORT) {
+      if (g_tsScrollActive && timestampStoreDeleteByNewest(g_tsSelectedNewest)) {
+        uint8_t count = timestampStoreCount();
+        if (count == 0) {
+          g_tsSelectedNewest = 0;
+        } else if (g_tsSelectedNewest >= count) {
+          g_tsSelectedNewest = (uint8_t)(count - 1);
+        }
+        g_tsDeleteAnimUntil = millis() + 700UL;
+        g_modeEpoch++;
+      }
+    } else if (event == BUTTON_LEFT_LONG) {
+      g_tsConfirmDeleteAll = true;
+      g_modeEpoch++;
     }
   } else if (mode == MODE_STOPWATCH) {
     if (event == BUTTON_ENC_SHORT) {

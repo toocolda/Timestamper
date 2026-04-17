@@ -67,8 +67,7 @@ void setup() {
 
   initButtons();
 
-  lcd.setCursor(0, 0);
-  lcd.print("Init...");
+  updateDisplay(g_currentMode);  // Force initial display immediately
 }
 
 // ===== Loop =====
@@ -88,9 +87,16 @@ void loop() {
   handleModeEvent(g_currentMode, buttonEvent);
 
   static uint32_t lastUpdate = 0;
-  static uint8_t lastDisplayedMode = 255;
+  static uint8_t lastDisplayedMode = 0;  // Must match g_currentMode at startup for encoder to work
   static int32_t lastEncoderForEdit = 0;
   static bool wasEditing = false;
+  static bool firstLoop = true;
+
+  // Force refresh on first loop iteration (in case g_modeEpoch incremented before reaching here)
+  if (firstLoop) {
+    firstLoop = false;
+    lastUpdate = millis();  // Sync after initial setup() display
+  }
 
   // ===== Read Encoder =====
   int32_t encoderValue;
@@ -110,7 +116,8 @@ void loop() {
   bool isEditing = timeEditIsActive();
   bool isEditingOffset = offsetEditIsActive();
   bool isEditingTimer = timerEditIsActive();
-  bool anyEditing = isEditing || isEditingOffset || isEditingTimer;
+  bool isTimestampScroll = (g_currentMode == MODE_TIMESTAMP_REVIEW) && timestampModeIsScrollActive();
+  bool anyEditing = isEditing || isEditingOffset || isEditingTimer || isTimestampScroll;
   static bool skipModeChangeOnce = false;  // Skip one mode change iteration after edit exit
 
   // On entry to any edit mode, sync encoder baseline so first delta is zero.
@@ -142,6 +149,15 @@ void loop() {
     int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
     if (encDelta != 0) {
       timerEditRotaryInput(encDelta);
+      lastEncoderForEdit = encoderValue / ENC_DIVISOR;
+    }
+    wasEditing = true;
+    skipModeChangeOnce = false;
+  } else if (isTimestampScroll) {
+    // In timestamp mode scroll state: encoder navigates stored records.
+    int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
+    if (encDelta != 0) {
+      timestampModeScrollBy(encDelta);
       lastEncoderForEdit = encoderValue / ENC_DIVISOR;
     }
     wasEditing = true;
