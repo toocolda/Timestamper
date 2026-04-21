@@ -2,14 +2,14 @@
 
 /**
  * @file timer.h
- * @brief Dual independent countdown timers with alarm
+ * @brief Single fuel countdown timer with alarm
  *
- * Two timer channels with features:
- * - 0-59:59:59 countdown range
+ * Fuel timer features:
+ * - 00:00:00 to 99:59:59 range
  * - Configurable initial value
  * - Automatic alarm trigger + audio alert
  * - Elapsed time counter after alarm
- * - Per-channel start/stop control
+ * - Start/stop/reset control
  */
 
 #include <stdint.h>
@@ -33,8 +33,8 @@ void timerAcknowledgeAllAlarms(void);
 // ===== Display State =====
 
 /**
- * Get display values for a timer channel
- * @param channel 0 or 1
+ * Get display values for the timer
+ * @param channel Compatibility parameter (ignored in single-timer mode)
  * @param hour, minute, second Output time display values
  * @param elapsed true if elapsed (post-alarm)
  * @param running true if countdown active

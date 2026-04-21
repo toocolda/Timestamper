@@ -10,32 +10,23 @@ struct StopwatchState {
   uint32_t runStartMs;
 };
 
-static StopwatchState g_sw[2] = {
-  {false, 0, 0},
-  {false, 0, 0}
-};
-
-static uint8_t g_selected = 0;  // 0 => SW1, 1 => SW2
-
-static uint8_t clampIndex(uint8_t index) {
-  return (index > 1) ? 1 : index;
-}
+static StopwatchState g_sw = {false, 0, 0};
 
 static uint32_t stopwatchComputeTenths(uint8_t index) {
-  uint8_t i = clampIndex(index);
+  (void)index;
 
-  if (!g_sw[i].running) {
-    return g_sw[i].accumulatedTenths;
+  if (!g_sw.running) {
+    return g_sw.accumulatedTenths;
   }
 
-  uint32_t elapsedMs = millis() - g_sw[i].runStartMs;
+  uint32_t elapsedMs = millis() - g_sw.runStartMs;
   uint32_t elapsedTenths = elapsedMs / 100;
-  uint32_t totalTenths = g_sw[i].accumulatedTenths + elapsedTenths;
+  uint32_t totalTenths = g_sw.accumulatedTenths + elapsedTenths;
 
   // Saturate and auto-stop at max range.
   if (totalTenths >= kMaxTenths) {
-    g_sw[i].accumulatedTenths = kMaxTenths;
-    g_sw[i].running = false;
+    g_sw.accumulatedTenths = kMaxTenths;
+    g_sw.running = false;
     return kMaxTenths;
   }
 
@@ -43,36 +34,36 @@ static uint32_t stopwatchComputeTenths(uint8_t index) {
 }
 
 void stopwatchStartStopToggle(uint8_t index) {
-  uint8_t i = clampIndex(index);
+  (void)index;
 
-  if (g_sw[i].running) {
-    g_sw[i].accumulatedTenths = stopwatchComputeTenths(i);
-    g_sw[i].running = false;
+  if (g_sw.running) {
+    g_sw.accumulatedTenths = stopwatchComputeTenths(0);
+    g_sw.running = false;
     return;
   }
 
-  if (g_sw[i].accumulatedTenths >= kMaxTenths) {
+  if (g_sw.accumulatedTenths >= kMaxTenths) {
     return;  // Already maxed; must reset before running again.
   }
 
-  g_sw[i].runStartMs = millis();
-  g_sw[i].running = true;
+  g_sw.runStartMs = millis();
+  g_sw.running = true;
 }
 
 void stopwatchReset(uint8_t index) {
-  uint8_t i = clampIndex(index);
-  g_sw[i].running = false;
-  g_sw[i].accumulatedTenths = 0;
-  g_sw[i].runStartMs = 0;
+  (void)index;
+  g_sw.running = false;
+  g_sw.accumulatedTenths = 0;
+  g_sw.runStartMs = 0;
 }
 
 bool stopwatchIsRunning(uint8_t index) {
-  uint8_t i = clampIndex(index);
-  return g_sw[i].running;
+  (void)index;
+  return g_sw.running;
 }
 
 bool stopwatchAnyRunning() {
-  return g_sw[0].running || g_sw[1].running;
+  return g_sw.running;
 }
 
 uint32_t stopwatchGetTenths(uint8_t index) {
@@ -97,9 +88,9 @@ void stopwatchGetDisplay(uint8_t index, uint8_t* hours, uint8_t* minutes, uint8_
 }
 
 uint8_t stopwatchGetSelected() {
-  return g_selected;
+  return 0;
 }
 
 void stopwatchToggleSelected() {
-  g_selected = (g_selected == 0) ? 1 : 0;
+  // Single stopwatch mode: no secondary channel to select.
 }

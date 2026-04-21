@@ -522,53 +522,35 @@ void displayModeTimestampReview() {
 // ===== Mode: Stopwatch =====
 void displayModeStopwatch() {
   static uint32_t lastEpoch = 0;
-  static uint32_t lastTenths1 = 0xFFFFFFFFUL;
-  static uint32_t lastTenths2 = 0xFFFFFFFFUL;
-  static bool lastRunning1 = false;
-  static bool lastRunning2 = false;
-  static uint8_t lastSelected = 255;
+  static uint32_t lastTenths = 0xFFFFFFFFUL;
+  static bool lastRunning = false;
 
   if (lastEpoch != g_modeEpoch) {
     lcd.clear();
     lastEpoch = g_modeEpoch;
-    lastTenths1 = 0xFFFFFFFFUL;
-    lastTenths2 = 0xFFFFFFFFUL;
-    lastRunning1 = !stopwatchIsRunning(0);  // force redraw below
-    lastRunning2 = !stopwatchIsRunning(1);  // force redraw below
-    lastSelected = 255;
+    lastTenths = 0xFFFFFFFFUL;
+    lastRunning = !stopwatchIsRunning(0);  // force redraw below
   }
 
-  uint32_t tenths1 = stopwatchGetTenths(0);
-  uint32_t tenths2 = stopwatchGetTenths(1);
-  bool running1 = stopwatchIsRunning(0);
-  bool running2 = stopwatchIsRunning(1);
-  uint8_t selected = stopwatchGetSelected();
+  uint32_t tenths = stopwatchGetTenths(0);
+  bool running = stopwatchIsRunning(0);
 
-  if (tenths1 != lastTenths1 || tenths2 != lastTenths2 ||
-      running1 != lastRunning1 || running2 != lastRunning2 ||
-      selected != lastSelected) {
-    uint8_t h1 = 0, m1 = 0, s1 = 0, t1 = 0;
-    uint8_t h2 = 0, m2 = 0, s2 = 0, t2 = 0;
-    stopwatchGetDisplay(0, &h1, &m1, &s1, &t1);
-    stopwatchGetDisplay(1, &h2, &m2, &s2, &t2);
+  if (tenths != lastTenths || running != lastRunning) {
+    uint8_t h = 0, m = 0, s = 0, t = 0;
+    stopwatchGetDisplay(0, &h, &m, &s, &t);
 
     lcd.setCursor(0, 0);
     char line1[LCD_BUF_SIZE];
-    snprintf(line1, LCD_BUF_SIZE, "%cSW1 %02d:%02d:%02d.%1d %s",
-             (selected == 0) ? '>' : ' ', h1, m1, s1, t1, running1 ? "RUN" : "STP");
+    snprintf(line1, LCD_BUF_SIZE, "STOPWATCH       %s", running ? "RUN" : "STP");
     lcd.print(line1);
 
     lcd.setCursor(0, 1);
     char line2[LCD_BUF_SIZE];
-    snprintf(line2, LCD_BUF_SIZE, "%cSW2 %02d:%02d:%02d.%1d %s",
-             (selected == 1) ? '>' : ' ', h2, m2, s2, t2, running2 ? "RUN" : "STP");
+    snprintf(line2, LCD_BUF_SIZE, "     %02d:%02d:%02d.%1d     ", h, m, s, t);
     lcd.print(line2);
 
-    lastTenths1 = tenths1;
-    lastTenths2 = tenths2;
-    lastRunning1 = running1;
-    lastRunning2 = running2;
-    lastSelected = selected;
+    lastTenths = tenths;
+    lastRunning = running;
   }
 }
 
@@ -583,48 +565,40 @@ void displayModeTimer() {
     lastSig = 0xFFFFFFFFUL;
   }
 
-  uint8_t sel = timerGetSelected();
   bool editActive = timerEditIsActive();
   bool editFlashShow = true;
   if (editActive) {
     editFlashShow = timerEditShouldFlash();
   }
 
-  uint8_t h1 = 0, m1 = 0, s1 = 0;
-  uint8_t h2 = 0, m2 = 0, s2 = 0;
-  bool e1 = false, r1 = false, a1 = false;
-  bool e2 = false, r2 = false, a2 = false;
+  uint8_t h = 0, m = 0, s = 0;
+  bool elapsed = false, running = false, alarm = false;
 
-  timerGetDisplay(0, &h1, &m1, &s1, &e1, &r1, &a1);
-  timerGetDisplay(1, &h2, &m2, &s2, &e2, &r2, &a2);
+  timerGetDisplay(0, &h, &m, &s, &elapsed, &running, &alarm);
 
-  // 32-bit signature with non-overlapping bit zones per channel so equal
-  // values between T1 and T2 never XOR-cancel each other.
+  // Signature for one timer display state.
   uint32_t sig = 0;
-  sig  = (uint32_t)(s1 & 0x3F);           // bits  5: 0  - T1 seconds
-  sig |= (uint32_t)(s2 & 0x3F) << 6;      // bits 11: 6  - T2 seconds
-  sig |= (uint32_t)(m1 & 0x3F) << 12;     // bits 17:12  - T1 minutes
-  sig |= (uint32_t)(m2 & 0x3F) << 18;     // bits 23:18  - T2 minutes
-  sig |= (uint32_t)(h1 & 0x0F) << 24;     // bits 27:24  - T1 hours
-  sig |= (uint32_t)(h2 & 0x0F) << 28;     // bits 31:28  - T2 hours
-  // Flags XOR'd in; collision probability is negligible for state transitions.
-  uint16_t flagBits = ((uint16_t)(sel != 0)    ) |
-                      ((uint16_t)r1        << 1 ) |
-                      ((uint16_t)r2        << 2 ) |
-                      ((uint16_t)a1        << 3 ) |
-                      ((uint16_t)a2        << 4 ) |
-                      ((uint16_t)e1        << 5 ) |
-                      ((uint16_t)e2        << 6 ) |
-                      ((uint16_t)editActive << 7 ) |
-                      ((uint16_t)editFlashShow << 8);
+  sig  = (uint32_t)(s & 0x3F);
+  sig |= (uint32_t)(m & 0x3F) << 6;
+  sig |= (uint32_t)(h & 0x7F) << 12;
+  uint16_t flagBits = ((uint16_t)running       ) |
+                      ((uint16_t)alarm      << 1 ) |
+                      ((uint16_t)elapsed    << 2 ) |
+                      ((uint16_t)editActive << 3 ) |
+                      ((uint16_t)editFlashShow << 4);
   sig ^= (uint32_t)flagBits;
 
   if (sig != lastSig) {
+    lcd.setCursor(0, 0);
+    char head[LCD_BUF_SIZE];
+    const char* state = alarm ? "ALM" : (running ? "RUN" : "STP");
+    snprintf(head, LCD_BUF_SIZE, "FUEL TIMER      %s", state);
+    lcd.print(head);
+
     if (editActive) {
       uint8_t eh = 0, em = 0, es = 0;
       timerEditGetPreview(&eh, &em, &es);
       bool show = editFlashShow;
-      uint8_t editIdx = timerEditGetIndex();
       TimerEditField_t field = timerEditGetField();
 
       char hh[3], mm[3], ss[3];
@@ -638,43 +612,15 @@ void displayModeTimer() {
         else if (field == TIMER_EDIT_SECOND) strcpy(ss, "  ");
       }
 
-      // Keep non-edited channel visible for context.
-      lcd.setCursor(0, 0);
-      char line1[LCD_BUF_SIZE];
-      if (editIdx == 0) {
-        snprintf(line1, LCD_BUF_SIZE, ">T1  %s:%s:%s EDT", hh, mm, ss);
-      } else {
-        snprintf(line1, LCD_BUF_SIZE, " T1 %c%02d:%02d:%02d %s",
-                 e1 ? '+' : ' ', h1, m1, s1, a1 ? "ALM" : (r1 ? "RUN" : "STP"));
-      }
-      lcd.print(line1);
-
       lcd.setCursor(0, 1);
       char line2[LCD_BUF_SIZE];
-      if (editIdx == 1) {
-        snprintf(line2, LCD_BUF_SIZE, ">T2  %s:%s:%s EDT", hh, mm, ss);
-      } else {
-        snprintf(line2, LCD_BUF_SIZE, " T2 %c%02d:%02d:%02d %s",
-                 e2 ? '+' : ' ', h2, m2, s2, a2 ? "ALM" : (r2 ? "RUN" : "STP"));
-      }
+      snprintf(line2, LCD_BUF_SIZE, "     - %s:%s:%s      ", hh, mm, ss);
       lcd.print(line2);
     } else {
-      lcd.setCursor(0, 0);
-      char line1[LCD_BUF_SIZE];
-      snprintf(line1, LCD_BUF_SIZE, "%cT1 %c%02d:%02d:%02d %s",
-               (sel == 0) ? '>' : ' ',
-               e1 ? '+' : ' ',
-               h1, m1, s1,
-               a1 ? "ALM" : (r1 ? "RUN" : "STP"));
-      lcd.print(line1);
-
       lcd.setCursor(0, 1);
       char line2[LCD_BUF_SIZE];
-      snprintf(line2, LCD_BUF_SIZE, "%cT2 %c%02d:%02d:%02d %s",
-               (sel == 1) ? '>' : ' ',
-               e2 ? '+' : ' ',
-               h2, m2, s2,
-               a2 ? "ALM" : (r2 ? "RUN" : "STP"));
+      snprintf(line2, LCD_BUF_SIZE, "     %c %02d:%02d:%02d     ",
+               elapsed ? '+' : '-', h, m, s);
       lcd.print(line2);
     }
 
@@ -897,24 +843,22 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
       g_modeEpoch++;
     }
   } else if (mode == MODE_STOPWATCH) {
-    if (event == BUTTON_ENC_SHORT) {
-      stopwatchToggleSelected();
-    } else if (event == BUTTON_RIGHT_SHORT) {
-      stopwatchStartStopToggle(stopwatchGetSelected());
+    if (event == BUTTON_ENC_SHORT || event == BUTTON_RIGHT_SHORT) {
+      stopwatchStartStopToggle(0);
     } else if (event == BUTTON_LEFT_SHORT) {
-      stopwatchReset(stopwatchGetSelected());
+      stopwatchReset(0);
     }
   } else if (mode == MODE_TIMER) {
     if (event == BUTTON_ENC_LONG) {
-      timerEditStart(timerGetSelected());
+      timerEditStart(0);
     } else if (event == BUTTON_ENC_SHORT && timerEditIsActive()) {
       timerEditButtonPress();
     } else if (event == BUTTON_ENC_SHORT) {
-      timerToggleSelected();
+      timerStartStopToggle(0);
     } else if (event == BUTTON_RIGHT_SHORT) {
-      timerStartStopToggle(timerGetSelected());
+      timerStartStopToggle(0);
     } else if (event == BUTTON_LEFT_SHORT) {
-      timerReset(timerGetSelected());
+      timerReset(0);
     }
   } else if (mode == MODE_LOCAL_ONLY) {
     if (event == BUTTON_LEFT_SHORT) {

@@ -3,7 +3,7 @@
 #include "features/timer.h"
 
 static const int32_t kMaxSeconds = 99L * 3600L + 59L * 60L + 59L;
-static const int32_t kDefaultPresetSeconds[2] = {60L, 120L};  // T1=1:00, T2=2:00
+static const int32_t kDefaultPresetSeconds = 0L;  // FUEL TIMER default = 00:00:00
 static const uint32_t kAlarmAutoClearMs = 5000;
 
 struct TimerChannel {
@@ -16,12 +16,7 @@ struct TimerChannel {
   uint32_t alarmStartedMs;
 };
 
-static TimerChannel g_timer[2] = {
-  {false, kDefaultPresetSeconds[0], kDefaultPresetSeconds[0], 0, false, false, 0},
-  {false, kDefaultPresetSeconds[1], kDefaultPresetSeconds[1], 0, false, false, 0}
-};
-
-static uint8_t g_selected = 0;  // 0 => T1, 1 => T2
+static TimerChannel g_timer = {false, kDefaultPresetSeconds, kDefaultPresetSeconds, 0, false, false, 0};
 
 // Timer edit state (for selected channel): HH -> MM -> SS
 static bool g_timerEditActive = false;
@@ -38,7 +33,8 @@ static uint32_t g_alarmLastStepMs = 0;
 static uint8_t g_alarmStep = 0;
 
 static uint8_t clampIndex(uint8_t index) {
-  return (index > 1) ? 1 : index;
+  (void)index;
+  return 0;
 }
 
 static int32_t clampSignedSeconds(int32_t signedSeconds) {
@@ -48,8 +44,8 @@ static int32_t clampSignedSeconds(int32_t signedSeconds) {
 }
 
 static int32_t timerCurrentSignedSeconds(uint8_t index) {
-  uint8_t i = clampIndex(index);
-  const TimerChannel& ch = g_timer[i];
+  (void)index;
+  const TimerChannel& ch = g_timer;
 
   if (!ch.running) {
     return ch.pausedSignedSeconds;
@@ -120,33 +116,27 @@ static int32_t joinHms(uint8_t h, uint8_t m, uint8_t s) {
 }
 
 void timerModeUpdate() {
-  bool anyAlarm = false;
+  int32_t nowSigned = timerCurrentSignedSeconds(0);
 
-  for (uint8_t i = 0; i < 2; i++) {
-    int32_t nowSigned = timerCurrentSignedSeconds(i);
-
-    // One-shot latch alarm when first reaching/going below zero while running.
-    if (g_timer[i].running && nowSigned <= 0 && !g_timer[i].alarmTriggered) {
-      g_timer[i].alarmActive = true;
-      g_timer[i].alarmTriggered = true;
-      g_timer[i].alarmStartedMs = millis();
-    }
-
-    // Auto-clear alarm after timeout if user takes no action.
-    if (g_timer[i].alarmActive && (millis() - g_timer[i].alarmStartedMs >= kAlarmAutoClearMs)) {
-      g_timer[i].alarmActive = false;
-    }
-
-    // Auto-stop at max elapsed bound.
-    if (g_timer[i].running && nowSigned <= -kMaxSeconds) {
-      g_timer[i].pausedSignedSeconds = -kMaxSeconds;
-      g_timer[i].running = false;
-    }
-
-    anyAlarm = anyAlarm || g_timer[i].alarmActive;
+  // One-shot latch alarm only for countdowns that started above zero.
+  if (g_timer.running && g_timer.runStartSignedSeconds > 0 && nowSigned <= 0 && !g_timer.alarmTriggered) {
+    g_timer.alarmActive = true;
+    g_timer.alarmTriggered = true;
+    g_timer.alarmStartedMs = millis();
   }
 
-  timerAlarmPatternUpdate(anyAlarm);
+  // Auto-clear alarm after timeout if user takes no action.
+  if (g_timer.alarmActive && (millis() - g_timer.alarmStartedMs >= kAlarmAutoClearMs)) {
+    g_timer.alarmActive = false;
+  }
+
+  // Auto-stop at max elapsed bound.
+  if (g_timer.running && nowSigned <= -kMaxSeconds) {
+    g_timer.pausedSignedSeconds = -kMaxSeconds;
+    g_timer.running = false;
+  }
+
+  timerAlarmPatternUpdate(g_timer.alarmActive);
 }
 
 void timerStartStopToggle(uint8_t index) {
@@ -157,21 +147,21 @@ void timerStartStopToggle(uint8_t index) {
     return;
   }
 
-  if (g_timer[i].running) {
-    g_timer[i].pausedSignedSeconds = timerCurrentSignedSeconds(i);
-    g_timer[i].running = false;
+  if (g_timer.running) {
+    g_timer.pausedSignedSeconds = timerCurrentSignedSeconds(i);
+    g_timer.running = false;
     return;
   }
 
-  if (g_timer[i].pausedSignedSeconds > 0) {
+  if (g_timer.pausedSignedSeconds > 0) {
     // Starting a new countdown cycle clears prior alarm one-shot state.
-    g_timer[i].alarmTriggered = false;
-    g_timer[i].alarmActive = false;
+    g_timer.alarmTriggered = false;
+    g_timer.alarmActive = false;
   }
 
-  g_timer[i].runStartSignedSeconds = g_timer[i].pausedSignedSeconds;
-  g_timer[i].runStartMs = millis();
-  g_timer[i].running = true;
+  g_timer.runStartSignedSeconds = g_timer.pausedSignedSeconds;
+  g_timer.runStartMs = millis();
+  g_timer.running = true;
 }
 
 void timerReset(uint8_t index) {
@@ -180,52 +170,51 @@ void timerReset(uint8_t index) {
     g_timerEditActive = false;
     g_timerEditField = TIMER_EDIT_NONE;
   }
-  g_timer[i].running = false;
-  g_timer[i].pausedSignedSeconds = kDefaultPresetSeconds[i];
-  g_timer[i].runStartSignedSeconds = kDefaultPresetSeconds[i];
-  g_timer[i].runStartMs = 0;
-  g_timer[i].alarmActive = false;
-  g_timer[i].alarmTriggered = false;
-  g_timer[i].alarmStartedMs = 0;
+  g_timer.running = false;
+  g_timer.pausedSignedSeconds = kDefaultPresetSeconds;
+  g_timer.runStartSignedSeconds = kDefaultPresetSeconds;
+  g_timer.runStartMs = 0;
+  g_timer.alarmActive = false;
+  g_timer.alarmTriggered = false;
+  g_timer.alarmStartedMs = 0;
 }
 
 bool timerIsRunning(uint8_t index) {
-  return g_timer[clampIndex(index)].running;
+  return g_timer.running;
 }
 
 bool timerAnyRunning() {
-  return g_timer[0].running || g_timer[1].running;
+  return g_timer.running;
 }
 
 bool timerAlarmActive(uint8_t index) {
-  return g_timer[clampIndex(index)].alarmActive;
+  return g_timer.alarmActive;
 }
 
 bool timerAnyAlarmActive() {
-  return g_timer[0].alarmActive || g_timer[1].alarmActive;
+  return g_timer.alarmActive;
 }
 
 void timerAcknowledgeAllAlarms() {
-  g_timer[0].alarmActive = false;
-  g_timer[1].alarmActive = false;
+  g_timer.alarmActive = false;
   timerAlarmPatternUpdate(false);
 }
 
 uint8_t timerGetSelected() {
-  return g_selected;
+  return 0;
 }
 
 void timerToggleSelected() {
-  g_selected = (g_selected == 0) ? 1 : 0;
+  // Single timer mode: no secondary channel to select.
 }
 
 void timerEditStart(uint8_t index) {
   uint8_t i = clampIndex(index);
-  if (g_timer[i].running) {
+  if (g_timer.running) {
     return;  // Edit only when stopped to keep UX predictable.
   }
 
-  int32_t preset = g_timer[i].pausedSignedSeconds;
+  int32_t preset = g_timer.pausedSignedSeconds;
   if (preset < 0) preset = 0;  // If showing elapsed, start edit from 00:00:00.
 
   g_timerEditActive = true;
@@ -284,13 +273,14 @@ void timerEditButtonPress() {
 
   // Finish edit on SECOND -> save and auto-start.
   uint8_t i = g_timerEditIndex;
-  g_timer[i].pausedSignedSeconds = g_timerEditSeconds;
-  g_timer[i].runStartSignedSeconds = g_timerEditSeconds;
-  g_timer[i].runStartMs = millis();
-  g_timer[i].running = true;
-  g_timer[i].alarmActive = false;
-  g_timer[i].alarmTriggered = false;
-  g_timer[i].alarmStartedMs = 0;
+  (void)i;
+  g_timer.pausedSignedSeconds = g_timerEditSeconds;
+  g_timer.runStartSignedSeconds = g_timerEditSeconds;
+  g_timer.runStartMs = millis();
+  g_timer.running = true;
+  g_timer.alarmActive = false;
+  g_timer.alarmTriggered = false;
+  g_timer.alarmStartedMs = 0;
 
   g_timerEditActive = false;
   g_timerEditField = TIMER_EDIT_NONE;
@@ -344,9 +334,9 @@ void timerGetDisplay(uint8_t index,
     *isElapsed = elapsed;
   }
   if (running) {
-    *running = g_timer[i].running;
+    *running = g_timer.running;
   }
   if (alarm) {
-    *alarm = g_timer[i].alarmActive;
+    *alarm = g_timer.alarmActive;
   }
 }
