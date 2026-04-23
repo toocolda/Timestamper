@@ -4,13 +4,14 @@
  * @file modes.h
  * @brief UI mode dispatcher and state management
  *
- * Manages the 6 display modes:
+ * Manages the 7 display modes:
  * - UTC Only: GPS time display
  * - UTC/Local: Dual timezone display
  * - Timestamp Review: Browse & manage saved timestamps
- * - Stopwatch: Two independent stopwatches
- * - Timer: Two independent countdowntimers
+ * - Stopwatch: Single stopwatch
+ * - Timer: Single fuel countdown/elapsed timer
  * - Local Only (Desk Mode): Formatted calendar/clock display
+ * - GPS Info: GS (knots), heading, altitude (feet)
  */
 
 #include <stdint.h>

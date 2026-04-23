@@ -738,6 +738,85 @@ void displayModeLocalOnly() {
   lcd.print(line2);
 }
 
+// ===== Mode: GPS Info =====
+void displayModeGpsInfo() {
+  static uint32_t lastEpoch = 0;
+  static uint32_t lastSig = 0xFFFFFFFFUL;
+
+  if (lastEpoch != g_modeEpoch) {
+    lcd.clear();
+    lastEpoch = g_modeEpoch;
+    lastSig = 0xFFFFFFFFUL;
+  }
+
+  bool gsValid = gps.speed.isValid();
+  bool hdgValid = gps.course.isValid();
+  bool altValid = gps.altitude.isValid();
+
+  uint16_t gsTenths = 0;
+  uint16_t headingDeg = 0;
+  int16_t altFeet = 0;
+
+  if (gsValid) {
+    double gsKnots = gps.speed.knots();
+    if (gsKnots < 0.0) gsKnots = 0.0;
+    if (gsKnots > 999.9) gsKnots = 999.9;
+    gsTenths = (uint16_t)(gsKnots * 10.0 + 0.5);
+  }
+
+  if (hdgValid) {
+    double hdg = gps.course.deg();
+    while (hdg < 0.0) hdg += 360.0;
+    while (hdg >= 360.0) hdg -= 360.0;
+    headingDeg = (uint16_t)(hdg + 0.5);
+    if (headingDeg >= 360U) headingDeg = 0;
+  }
+
+  if (altValid) {
+    double alt = gps.altitude.feet();
+    if (alt < -999.0) alt = -999.0;
+    if (alt > 32767.0) alt = 32767.0;
+    altFeet = (int16_t)(alt + (alt >= 0.0 ? 0.5 : -0.5));
+  }
+
+  uint32_t sig = 0;
+  sig |= (uint32_t)gsValid;
+  sig |= (uint32_t)hdgValid << 1;
+  sig |= (uint32_t)altValid << 2;
+  sig ^= (uint32_t)gsTenths << 3;
+  sig ^= (uint32_t)headingDeg << 14;
+  sig ^= (uint32_t)((uint16_t)altFeet) << 23;
+
+  if (sig == lastSig) {
+    return;
+  }
+  lastSig = sig;
+
+  char gsStr[7] = "  --.-";
+  char hdgStr[4] = "---";
+  char altStr[8] = "   ----";
+
+  if (gsValid) {
+    snprintf(gsStr, sizeof(gsStr), "%6.1f", gps.speed.knots());
+  }
+  if (hdgValid) {
+    snprintf(hdgStr, sizeof(hdgStr), "%03u", (unsigned int)headingDeg);
+  }
+  if (altValid) {
+    snprintf(altStr, sizeof(altStr), "%7.0f", gps.altitude.feet());
+  }
+
+  lcd.setCursor(0, 0);
+  char line1[LCD_BUF_SIZE];
+  snprintf(line1, LCD_BUF_SIZE, "GS:%sKT HDG:%s ", gsStr, hdgStr);
+  lcd.print(line1);
+
+  lcd.setCursor(0, 1);
+  char line2[LCD_BUF_SIZE];
+  snprintf(line2, LCD_BUF_SIZE, "ALT:%sFT       ", altStr);
+  lcd.print(line2);
+}
+
 // ===== Mode Dispatcher =====
 void updateDisplay(uint8_t mode) {
   switch (mode) {
@@ -758,6 +837,9 @@ void updateDisplay(uint8_t mode) {
       break;
     case MODE_LOCAL_ONLY:
       displayModeLocalOnly();
+      break;
+    case MODE_GPS_INFO:
+      displayModeGpsInfo();
       break;
     default:
       break;

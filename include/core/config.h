@@ -75,4 +75,5 @@
 #define MODE_STOPWATCH 3
 #define MODE_TIMER 4
 #define MODE_LOCAL_ONLY 5
-#define NUM_MODES 6
+#define MODE_GPS_INFO 6
+#define NUM_MODES 7
