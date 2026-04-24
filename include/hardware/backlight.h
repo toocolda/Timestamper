@@ -2,20 +2,23 @@
 
 /**
  * @file backlight.h
- * @brief LCD backlight control with smart blinking patterns
+ * @brief RGB LCD backlight control with smart blinking patterns
  *
- * Manages backlight on/off with two blinking triggers:
- * - Timer alarm active: continuous 200ms blink pattern
- * - Timestamp capture: 2-second blink pattern
+ * Manages RGB backlight on/off with two blinking triggers:
+ * - Timer alarm active: red 200ms blink pattern
+ * - Timestamp capture: green 2-second blink pattern
+ * - Manual toggle: blue steady-on (30s auto-off)
  */
 
 #include <stdint.h>
 
 /**
- * Initialize backlight control on specified GPIO pin
- * @param pin Digital output pin (e.g., PIN_BACKLIGHT)
+ * Initialize RGB backlight control on specified GPIO pins
+ * @param bluePin Blue channel pin
+ * @param redPin Red channel pin
+ * @param greenPin Green channel pin
  */
-void backlightInit(uint8_t pin);
+void backlightInit(uint8_t bluePin, uint8_t redPin, uint8_t greenPin);
 
 /**
  * Update backlight state - call every loop iteration

@@ -67,7 +67,7 @@ void setup() {
   pinMode(BTN_RIGHT, INPUT_PULLUP);
   pinMode(BTN_TOP, INPUT_PULLUP);
   pinMode(BUZZER, OUTPUT);
-  backlightInit(PIN_BACKLIGHT);
+  backlightInit(PIN_BACKLIGHT_BLUE, PIN_BACKLIGHT_RED, PIN_BACKLIGHT_GREEN);
   batteryInit(PIN_BATTERY);
 
   lastState = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);

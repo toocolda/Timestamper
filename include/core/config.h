@@ -50,7 +50,9 @@
 
 // Outputs
 #define PIN_BUZZER 9
-#define PIN_BACKLIGHT 10
+#define PIN_BACKLIGHT_BLUE A3
+#define PIN_BACKLIGHT_RED A1
+#define PIN_BACKLIGHT_GREEN A2
 
 // ===== ADC Pin Assignments =====
 #define PIN_BATTERY A0
