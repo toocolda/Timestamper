@@ -5,6 +5,7 @@
 static TimeEdit_t g_mcuCurrentTime = {2020, 1, 1, 0, 0, 0};  // Cache current calculated time
 static uint32_t g_mcuTimeBaseSeconds = 0;  // Unix-like seconds counter
 static uint32_t g_mcuTimeLastSyncMs = 0;   // Last sync time from GPS (milliseconds)
+static uint32_t g_mcuExternalElapsedSeconds = 0;  // Extra elapsed seconds (used during deep sleep)
 
 // ===== Manual Time Storage =====
 static TimeEdit_t g_manualTime = {2020, 1, 1, 12, 0, 0};
@@ -20,6 +21,7 @@ void mcuTimeSync(TimeEdit_t* timeData) {
     // Must cast to uint32_t first to prevent 16-bit overflow during intermediate calculations
     g_mcuTimeBaseSeconds = ((uint32_t)timeData->hour * 3600) + ((uint32_t)timeData->minute * 60) + timeData->second;
     g_mcuTimeLastSyncMs = millis();
+    g_mcuExternalElapsedSeconds = 0;
   }
 }
 
@@ -36,7 +38,7 @@ TimeEdit_t mcuTimeGetCurrent() {
   
   // Calculate elapsed time since last sync
   uint32_t elapsedMs = millis() - g_mcuTimeLastSyncMs;
-  uint32_t elapsedSeconds = elapsedMs / 1000;
+  uint32_t elapsedSeconds = (elapsedMs / 1000) + g_mcuExternalElapsedSeconds;
   uint32_t currentTotalSeconds = g_mcuTimeBaseSeconds + elapsedSeconds;
   
   // Handle day wraparound (86400 seconds per day)
@@ -100,4 +102,9 @@ TimeEdit_t getManualTime() {
 // ===== Check if Manual Time Set =====
 bool hasManualTime() {
   return g_hasManualTime;
+}
+
+void mcuTimeAddElapsedSeconds(uint32_t seconds) {
+  if (seconds == 0) return;
+  g_mcuExternalElapsedSeconds += seconds;
 }

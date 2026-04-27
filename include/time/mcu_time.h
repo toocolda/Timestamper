@@ -48,6 +48,7 @@ bool time_shouldSkipGPSSync(void);
 void mcuTimeSync(TimeEdit_t* timeData);
 TimeEdit_t mcuTimeGetCurrent(void);
 bool shouldSkipGPSSync(void);
+void mcuTimeAddElapsedSeconds(uint32_t seconds);
 
 void setManualTime(TimeEdit_t* timeData);
 TimeEdit_t getManualTime(void);

@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <TinyGPS++.h>
+#include <avr/interrupt.h>
+#include <avr/sleep.h>
 #include "display/st7036.h"
 #include "core/config.h"
 #include "core/modes.h"
@@ -45,7 +47,137 @@ const int8_t enc_table[16] = {
   0,  1, -1,  0
 };
 
+// ===== Desk-Mode Async Timer2 Sleep =====
+// Timer2 runs from 32.768 kHz crystal on TOSC1/TOSC2 and overflows every 1 second:
+// 32768 / 128 prescaler / 256 counts = 1 Hz.
+static volatile uint32_t s_deskWakeTicks = 0;
+static volatile bool s_deskInputWake = false;
+static bool s_deskSleepEnabled = false;
+static uint32_t s_deskAppliedTicks = 0;
+static uint32_t s_deskEnterMs = 0;  // millis() when Timer2 sleep was first armed
+static uint32_t s_deskStayAwakeUntilMs = 0;
+static const uint32_t kDeskSleepDelayMs = 5000;  // Grace period before first sleep
+static const uint32_t kDeskInputAwakeMs = 700;   // Keep loop awake after input wake for debounce/long-press
+
+// PCINT2 ISR — intentionally empty; fires on any change of pins 4-7 (buttons)
+// to wake the MCU from PWR_SAVE sleep so button press is serviced immediately.
+ISR(PCINT2_vect) {
+  s_deskInputWake = true;
+}
+
+ISR(TIMER2_OVF_vect) {
+  s_deskWakeTicks++;
+}
+
+static void deskSleepEnableTimer2Async() {
+  if (s_deskSleepEnabled) return;
+
+  cli();
+  ASSR |= _BV(AS2);  // Timer2 clock source = external 32.768 kHz crystal
+  TCCR2A = 0;        // Normal mode
+  TCCR2B = _BV(CS22) | _BV(CS20);  // Prescaler 128 => 1 Hz overflow
+  TCNT2 = 0;
+
+  // Wait for async register updates to complete before enabling IRQ.
+  while (ASSR & (_BV(TCR2AUB) | _BV(TCR2BUB) | _BV(TCN2UB))) {
+  }
+
+  TIFR2 = _BV(TOV2);   // Clear stale overflow flag
+  TIMSK2 |= _BV(TOIE2);
+
+  s_deskWakeTicks = 0;
+  s_deskAppliedTicks = 0;
+  s_deskEnterMs = millis();
+  s_deskSleepEnabled = true;
+  sei();
+}
+
+static void deskSleepDisableTimer2Async() {
+  if (!s_deskSleepEnabled) return;
+
+  cli();
+  TIMSK2 &= (uint8_t)~_BV(TOIE2);
+  TCCR2A = 0;
+  TCCR2B = 0;
+  ASSR &= (uint8_t)~_BV(AS2);  // Back to synchronous system clock domain
+
+  while (ASSR & (_BV(TCR2AUB) | _BV(TCR2BUB) | _BV(TCN2UB))) {
+  }
+
+  s_deskSleepEnabled = false;
+  s_deskEnterMs = 0;
+  sei();
+}
+
+static bool deskSleepShouldRun() {
+  // Keep sleep restricted to desk mode, and avoid conflict with active timers/alarm tone.
+  return (g_currentMode == MODE_LOCAL_ONLY) && !timerAnyRunning() && !timerAnyAlarmActive();
+}
+
+static void deskSleepMaybeRunOneCycle() {
+  if (!deskSleepShouldRun()) {
+    deskSleepDisableTimer2Async();
+    return;
+  }
+
+  deskSleepEnableTimer2Async();
+
+  // 5-second grace period: let the normal loop run freely after entering Desk Mode
+  // so the display draws fully and mode-change buzz completes before sleeping.
+  if (millis() - s_deskEnterMs < kDeskSleepDelayMs) {
+    return;
+  }
+
+  // Keep CPU awake briefly after input wake so button debounce and long-press
+  // logic (millis-based) can run before sleeping again.
+  if (s_deskInputWake) {
+    s_deskInputWake = false;
+    s_deskStayAwakeUntilMs = millis() + kDeskInputAwakeMs;
+    return;
+  }
+  if ((int32_t)(millis() - s_deskStayAwakeUntilMs) < 0) {
+    return;
+  }
+
+  // Apply any seconds that accumulated while the CPU was asleep.
+  uint32_t ticks;
+  noInterrupts();
+  ticks = s_deskWakeTicks;
+  interrupts();
+
+  if (ticks != s_deskAppliedTicks) {
+    uint32_t delta = ticks - s_deskAppliedTicks;
+    s_deskAppliedTicks = ticks;
+    mcuTimeAddElapsedSeconds(delta);
+    // Do NOT increment g_modeEpoch — that would clear the LCD every second.
+    // displayModeLocalOnly() has its own signature cache and only writes changed content.
+    updateDisplay(g_currentMode);
+  }
+
+  set_sleep_mode(SLEEP_MODE_PWR_SAVE);
+  sleep_enable();
+
+  // Enable PCINT2 so button pins 4-7 (ENC_BTN, LEFT, RIGHT, TOP) wake the MCU.
+  // Encoder pins 2/3 already wake via INT0/INT1.
+  PCMSK2 |= (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22) | (1 << PCINT23);
+  PCICR  |= (1 << PCIE2);
+
+  noInterrupts();
+  bool stillDesk = deskSleepShouldRun();
+  interrupts();
+
+  if (stillDesk) {
+    sleep_cpu();
+  }
+  sleep_disable();
+
+  // Disable PCINT2 immediately after wakeup so it doesn't fire outside sleep.
+  PCICR  &= (uint8_t)~(1 << PCIE2);
+  PCMSK2 &= (uint8_t)~((1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22) | (1 << PCINT23));
+}
+
 void handleEncoder() {
+  s_deskInputWake = true;
   uint8_t state = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
   uint8_t index = (lastState << 2) | state;
 
@@ -82,6 +214,10 @@ void setup() {
 
 // ===== Loop =====
 void loop() {
+  if (!deskSleepShouldRun()) {
+    deskSleepDisableTimer2Async();
+  }
+
   // ===== Background Engines =====
   timerModeUpdate();
   backlightUpdate();
@@ -97,6 +233,11 @@ void loop() {
 
   // ===== Handle Button Presses =====
   ButtonEvent_t buttonEvent = handleButtons();
+
+  // Keep desk mode awake while user is actively pressing buttons.
+  if (g_currentMode == MODE_LOCAL_ONLY && buttonEvent != BUTTON_NONE) {
+    s_deskStayAwakeUntilMs = millis() + kDeskInputAwakeMs;
+  }
   
   // Send button events to modes for handling
   handleModeEvent(g_currentMode, buttonEvent);
@@ -204,8 +345,16 @@ void loop() {
 
       // Mode changed - increment epoch to signal all display functions
       if (newMode != lastDisplayedMode) {
+        uint8_t oldMode = g_currentMode;
         lastDisplayedMode = newMode;
         g_currentMode = newMode;
+
+        // Leaving desk mode: restore Timer2 before buzzOnce(), otherwise tone()
+        // can sound too short/quiet.
+        if (oldMode == MODE_LOCAL_ONLY && newMode != MODE_LOCAL_ONLY) {
+          deskSleepDisableTimer2Async();
+        }
+
         g_modeEpoch++;  // Signal mode change to all display functions
         buzzOnce(100);  // Buzz for 100ms on mode change
       }
@@ -227,4 +376,7 @@ void loop() {
     lastUpdate = millis();
     updateDisplay(g_currentMode);
   }
+
+  // In desk mode, sleep between 1 Hz async Timer2 wake-ups.
+  deskSleepMaybeRunOneCycle();
 }
