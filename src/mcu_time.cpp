@@ -1,11 +1,12 @@
 #include <Arduino.h>
 #include "time/mcu_time.h"
+#include "time/crystal_time.h"
 
 // ===== MCU Time State =====
 static TimeEdit_t g_mcuCurrentTime = {2020, 1, 1, 0, 0, 0};  // Cache current calculated time
 static uint32_t g_mcuTimeBaseSeconds = 0;  // Unix-like seconds counter
-static uint32_t g_mcuTimeLastSyncMs = 0;   // Last sync time from GPS (milliseconds)
-static uint32_t g_mcuExternalElapsedSeconds = 0;  // Extra elapsed seconds (used during deep sleep)
+static uint32_t g_mcuTimeSyncCrystalSeconds = 0;  // Crystal-second snapshot at last sync
+static bool g_mcuHasSync = false;
 
 // ===== Manual Time Storage =====
 static TimeEdit_t g_manualTime = {2020, 1, 1, 12, 0, 0};
@@ -20,8 +21,8 @@ void mcuTimeSync(TimeEdit_t* timeData) {
     // Convert full time to seconds for elapsed calculation
     // Must cast to uint32_t first to prevent 16-bit overflow during intermediate calculations
     g_mcuTimeBaseSeconds = ((uint32_t)timeData->hour * 3600) + ((uint32_t)timeData->minute * 60) + timeData->second;
-    g_mcuTimeLastSyncMs = millis();
-    g_mcuExternalElapsedSeconds = 0;
+    g_mcuTimeSyncCrystalSeconds = crystalTimeGetSeconds();
+    g_mcuHasSync = true;
   }
 }
 
@@ -31,14 +32,13 @@ TimeEdit_t mcuTimeGetCurrent() {
   
   TimeEdit_t current = g_mcuCurrentTime;  // Start with cached value
   
-  if (g_mcuTimeLastSyncMs == 0) {
+  if (!g_mcuHasSync) {
     // No sync yet, return manual time or default
     return (g_hasManualTime) ? g_manualTime : g_mcuCurrentTime;
   }
   
   // Calculate elapsed time since last sync
-  uint32_t elapsedMs = millis() - g_mcuTimeLastSyncMs;
-  uint32_t elapsedSeconds = (elapsedMs / 1000) + g_mcuExternalElapsedSeconds;
+  uint32_t elapsedSeconds = crystalTimeGetSeconds() - g_mcuTimeSyncCrystalSeconds;
   uint32_t currentTotalSeconds = g_mcuTimeBaseSeconds + elapsedSeconds;
   
   // Handle day wraparound (86400 seconds per day)
@@ -105,6 +105,6 @@ bool hasManualTime() {
 }
 
 void mcuTimeAddElapsedSeconds(uint32_t seconds) {
-  if (seconds == 0) return;
-  g_mcuExternalElapsedSeconds += seconds;
+  (void)seconds;
+  // Kept for API compatibility; no longer needed with crystal-driven core time.
 }

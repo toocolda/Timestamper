@@ -9,6 +9,7 @@
 #include "hardware/buttons.h"
 #include "time/time_edit.h"
 #include "time/mcu_time.h"
+#include "time/crystal_time.h"
 #include "time/local_time.h"
 #include "features/stopwatch.h"
 #include "features/timer.h"
@@ -47,15 +48,12 @@ const int8_t enc_table[16] = {
   0,  1, -1,  0
 };
 
-// ===== Desk-Mode Async Timer2 Sleep =====
-// Timer2 runs from 32.768 kHz crystal on TOSC1/TOSC2 and overflows every 1 second:
-// 32768 / 128 prescaler / 256 counts = 1 Hz.
-static volatile uint32_t s_deskWakeTicks = 0;
+// ===== Desk-Mode Sleep Control =====
 static volatile bool s_deskInputWake = false;
-static bool s_deskSleepEnabled = false;
-static uint32_t s_deskAppliedTicks = 0;
+static bool s_deskSleepArmed = false;
 static uint32_t s_deskEnterMs = 0;  // millis() when Timer2 sleep was first armed
 static uint32_t s_deskStayAwakeUntilMs = 0;
+static uint32_t s_deskLastDisplaySecond = 0xFFFFFFFFUL;
 static const uint32_t kDeskSleepDelayMs = 5000;  // Grace period before first sleep
 static const uint32_t kDeskInputAwakeMs = 700;   // Keep loop awake after input wake for debounce/long-press
 
@@ -65,77 +63,34 @@ ISR(PCINT2_vect) {
   s_deskInputWake = true;
 }
 
-ISR(TIMER2_OVF_vect) {
-  s_deskWakeTicks++;
-}
-
-static void deskSleepEnableTimer2Async() {
-  if (s_deskSleepEnabled) return;
-
-  cli();
-  ASSR |= _BV(AS2);  // Timer2 clock source = external 32.768 kHz crystal
-  TCCR2A = 0;        // Normal mode
-  TCCR2B = _BV(CS22) | _BV(CS20);  // Prescaler 128 => 1 Hz overflow
-  TCNT2 = 0;
-
-  // Wait for async register updates to complete before enabling IRQ.
-  while (ASSR & (_BV(TCR2AUB) | _BV(TCR2BUB) | _BV(TCN2UB))) {
-  }
-
-  TIFR2 = _BV(TOV2);   // Clear stale overflow flag
-  TIMSK2 |= _BV(TOIE2);
-
-  s_deskWakeTicks = 0;
-  s_deskAppliedTicks = 0;
-  s_deskEnterMs = millis();
-  s_deskSleepEnabled = true;
-  sei();
-}
-
-static void deskSleepDisableTimer2Async() {
-  if (!s_deskSleepEnabled) return;
-
-  cli();
-  TIMSK2 &= (uint8_t)~_BV(TOIE2);
-  TCCR2A = 0;
-  TCCR2B = 0;
-  ASSR &= (uint8_t)~_BV(AS2);  // Back to synchronous system clock domain
-
-  while (ASSR & (_BV(TCR2AUB) | _BV(TCR2BUB) | _BV(TCN2UB))) {
-  }
-
-  s_deskSleepEnabled = false;
-  s_deskEnterMs = 0;
-  sei();
-}
-
 static bool deskSleepShouldRun() {
   // Keep sleep restricted to desk mode, and avoid conflict with active timers/alarm tone.
   return (g_currentMode == MODE_LOCAL_ONLY) && !timerAnyRunning() && !timerAnyAlarmActive();
 }
 
-static void deskSleepDiscardPendingTicks() {
-  uint32_t ticks;
-  noInterrupts();
-  ticks = s_deskWakeTicks;
-  interrupts();
-  s_deskAppliedTicks = ticks;
+static void deskSleepResetState() {
+  s_deskSleepArmed = false;
+  s_deskInputWake = false;
+  s_deskEnterMs = 0;
+  s_deskStayAwakeUntilMs = 0;
+  s_deskLastDisplaySecond = 0xFFFFFFFFUL;
 }
 
 static void deskSleepMaybeRunOneCycle() {
   if (!deskSleepShouldRun()) {
-    deskSleepDisableTimer2Async();
+    deskSleepResetState();
     return;
   }
 
-  deskSleepEnableTimer2Async();
+  if (!s_deskSleepArmed) {
+    s_deskSleepArmed = true;
+    s_deskEnterMs = millis();
+    s_deskLastDisplaySecond = crystalTimeGetSeconds();
+  }
 
   // 5-second grace period: let the normal loop run freely after entering Desk Mode
   // so the display draws fully and mode-change buzz completes before sleeping.
   if (millis() - s_deskEnterMs < kDeskSleepDelayMs) {
-    // During grace period, wall time already advances via millis().
-    // Discard async ticks so they are not applied later as a jump.
-    deskSleepDiscardPendingTicks();
     return;
   }
 
@@ -144,24 +99,15 @@ static void deskSleepMaybeRunOneCycle() {
   if (s_deskInputWake) {
     s_deskInputWake = false;
     s_deskStayAwakeUntilMs = millis() + kDeskInputAwakeMs;
-    deskSleepDiscardPendingTicks();
     return;
   }
   if ((int32_t)(millis() - s_deskStayAwakeUntilMs) < 0) {
-    deskSleepDiscardPendingTicks();
     return;
   }
 
-  // Apply any seconds that accumulated while the CPU was asleep.
-  uint32_t ticks;
-  noInterrupts();
-  ticks = s_deskWakeTicks;
-  interrupts();
-
-  if (ticks != s_deskAppliedTicks) {
-    uint32_t delta = ticks - s_deskAppliedTicks;
-    s_deskAppliedTicks = ticks;
-    mcuTimeAddElapsedSeconds(delta);
+  uint32_t nowSecond = crystalTimeGetSeconds();
+  if (nowSecond != s_deskLastDisplaySecond) {
+    s_deskLastDisplaySecond = nowSecond;
     // Do NOT increment g_modeEpoch — that would clear the LCD every second.
     // displayModeLocalOnly() has its own signature cache and only writes changed content.
     updateDisplay(g_currentMode);
@@ -202,6 +148,7 @@ void handleEncoder() {
 void setup() {
   Wire.begin();
   lcd.begin();
+  crystalTimeInit();
 
   Serial.begin(GPS_BAUD);
 
@@ -227,10 +174,6 @@ void setup() {
 
 // ===== Loop =====
 void loop() {
-  if (!deskSleepShouldRun()) {
-    deskSleepDisableTimer2Async();
-  }
-
   // ===== Background Engines =====
   timerModeUpdate();
   backlightUpdate();
@@ -358,15 +301,8 @@ void loop() {
 
       // Mode changed - increment epoch to signal all display functions
       if (newMode != lastDisplayedMode) {
-        uint8_t oldMode = g_currentMode;
         lastDisplayedMode = newMode;
         g_currentMode = newMode;
-
-        // Leaving desk mode: restore Timer2 before buzzOnce() to avoid any
-        // timer-domain transition artifacts during the mode-change beep.
-        if (oldMode == MODE_LOCAL_ONLY && newMode != MODE_LOCAL_ONLY) {
-          deskSleepDisableTimer2Async();
-        }
 
         g_modeEpoch++;  // Signal mode change to all display functions
         buzzOnce(100);  // Buzz for 100ms on mode change

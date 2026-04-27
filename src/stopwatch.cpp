@@ -1,13 +1,15 @@
 #include <Arduino.h>
 #include "features/stopwatch.h"
+#include "time/crystal_time.h"
 
 // 99:59:59.9 in 0.1s units
 static const uint32_t kMaxTenths = 3599999UL;
+static const uint32_t kMaxTicks256 = ((kMaxTenths * 256UL) + 9UL) / 10UL;
 
 struct StopwatchState {
   bool running;
-  uint32_t accumulatedTenths;
-  uint32_t runStartMs;
+  uint32_t accumulatedTicks256;
+  uint32_t runStartTicks256;
 };
 
 static StopwatchState g_sw = {false, 0, 0};
@@ -16,16 +18,19 @@ static uint32_t stopwatchComputeTenths(uint8_t index) {
   (void)index;
 
   if (!g_sw.running) {
-    return g_sw.accumulatedTenths;
+    uint32_t tenths = (g_sw.accumulatedTicks256 * 10UL) / 256UL;
+    if (tenths > kMaxTenths) tenths = kMaxTenths;
+    return tenths;
   }
 
-  uint32_t elapsedMs = millis() - g_sw.runStartMs;
-  uint32_t elapsedTenths = elapsedMs / 100;
-  uint32_t totalTenths = g_sw.accumulatedTenths + elapsedTenths;
+  uint32_t nowTicks = crystalTimeGetTicks256();
+  uint32_t elapsedTicks = nowTicks - g_sw.runStartTicks256;
+  uint32_t totalTicks = g_sw.accumulatedTicks256 + elapsedTicks;
+  uint32_t totalTenths = (totalTicks * 10UL) / 256UL;
 
   // Saturate and auto-stop at max range.
-  if (totalTenths >= kMaxTenths) {
-    g_sw.accumulatedTenths = kMaxTenths;
+  if (totalTicks >= kMaxTicks256 || totalTenths >= kMaxTenths) {
+    g_sw.accumulatedTicks256 = kMaxTicks256;
     g_sw.running = false;
     return kMaxTenths;
   }
@@ -37,24 +42,28 @@ void stopwatchStartStopToggle(uint8_t index) {
   (void)index;
 
   if (g_sw.running) {
-    g_sw.accumulatedTenths = stopwatchComputeTenths(0);
+    uint32_t nowTicks = crystalTimeGetTicks256();
+    uint32_t elapsedTicks = nowTicks - g_sw.runStartTicks256;
+    uint32_t totalTicks = g_sw.accumulatedTicks256 + elapsedTicks;
+    if (totalTicks >= kMaxTicks256) totalTicks = kMaxTicks256;
+    g_sw.accumulatedTicks256 = totalTicks;
     g_sw.running = false;
     return;
   }
 
-  if (g_sw.accumulatedTenths >= kMaxTenths) {
+  if (g_sw.accumulatedTicks256 >= kMaxTicks256) {
     return;  // Already maxed; must reset before running again.
   }
 
-  g_sw.runStartMs = millis();
+  g_sw.runStartTicks256 = crystalTimeGetTicks256();
   g_sw.running = true;
 }
 
 void stopwatchReset(uint8_t index) {
   (void)index;
   g_sw.running = false;
-  g_sw.accumulatedTenths = 0;
-  g_sw.runStartMs = 0;
+  g_sw.accumulatedTicks256 = 0;
+  g_sw.runStartTicks256 = 0;
 }
 
 bool stopwatchIsRunning(uint8_t index) {

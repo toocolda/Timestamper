@@ -2,6 +2,7 @@
 #include "core/config.h"
 #include "features/timer.h"
 #include "hardware/buzzer.h"
+#include "time/crystal_time.h"
 
 static const int32_t kMaxSeconds = 99L * 3600L + 59L * 60L + 59L;
 static const int32_t kDefaultPresetSeconds = 0L;  // FUEL TIMER default = 00:00:00
@@ -11,7 +12,7 @@ struct TimerChannel {
   bool running;
   int32_t pausedSignedSeconds;   // >0 countdown remaining, <=0 elapsed magnitude encoded as negative
   int32_t runStartSignedSeconds;
-  uint32_t runStartMs;
+  uint32_t runStartTicks256;
   bool alarmActive;
   bool alarmTriggered;
   uint32_t alarmStartedMs;
@@ -52,8 +53,9 @@ static int32_t timerCurrentSignedSeconds(uint8_t index) {
     return ch.pausedSignedSeconds;
   }
 
-  uint32_t elapsedMs = millis() - ch.runStartMs;
-  int32_t elapsedSec = (int32_t)(elapsedMs / 1000UL);
+  uint32_t nowTicks = crystalTimeGetTicks256();
+  uint32_t elapsedTicks = nowTicks - ch.runStartTicks256;
+  int32_t elapsedSec = (int32_t)(elapsedTicks / 256UL);
   int32_t currentSigned = ch.runStartSignedSeconds - elapsedSec;
   return clampSignedSeconds(currentSigned);
 }
@@ -161,7 +163,7 @@ void timerStartStopToggle(uint8_t index) {
   }
 
   g_timer.runStartSignedSeconds = g_timer.pausedSignedSeconds;
-  g_timer.runStartMs = millis();
+  g_timer.runStartTicks256 = crystalTimeGetTicks256();
   g_timer.running = true;
 }
 
@@ -174,7 +176,7 @@ void timerReset(uint8_t index) {
   g_timer.running = false;
   g_timer.pausedSignedSeconds = kDefaultPresetSeconds;
   g_timer.runStartSignedSeconds = kDefaultPresetSeconds;
-  g_timer.runStartMs = 0;
+  g_timer.runStartTicks256 = 0;
   g_timer.alarmActive = false;
   g_timer.alarmTriggered = false;
   g_timer.alarmStartedMs = 0;
@@ -277,7 +279,7 @@ void timerEditButtonPress() {
   (void)i;
   g_timer.pausedSignedSeconds = g_timerEditSeconds;
   g_timer.runStartSignedSeconds = g_timerEditSeconds;
-  g_timer.runStartMs = millis();
+  g_timer.runStartTicks256 = crystalTimeGetTicks256();
   g_timer.running = true;
   g_timer.alarmActive = false;
   g_timer.alarmTriggered = false;
