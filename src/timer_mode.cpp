@@ -274,9 +274,15 @@ void timerEditButtonPress() {
     return;
   }
 
+  if (g_timerEditField == TIMER_EDIT_SECOND) {
+    timerEditFinish();
+  }
+}
+
+void timerEditFinish() {
+  if (!g_timerEditActive) return;
+
   // Finish edit on SECOND -> save and auto-start.
-  uint8_t i = g_timerEditIndex;
-  (void)i;
   g_timer.pausedSignedSeconds = g_timerEditSeconds;
   g_timer.runStartSignedSeconds = g_timerEditSeconds;
   g_timer.runStartTicks256 = crystalTimeGetTicks256();

@@ -56,6 +56,7 @@ void timerReset(uint8_t channel);
 void timerEditStart(uint8_t channel);
 bool timerEditIsActive(void);
 void timerEditButtonPress(void);
+void timerEditFinish(void);
 void timerEditRotaryInput(int32_t delta);
 void timerEditGetPreview(uint8_t* hour, uint8_t* minute, uint8_t* second);
 uint8_t timerEditGetIndex(void);

@@ -876,6 +876,8 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     if (event == BUTTON_ENC_LONG) {
       TimeEdit_t currentTime = mcuTimeGetCurrent();
       timeEditStart(&currentTime);
+    } else if (event == BUTTON_RIGHT_SHORT && timeEditIsActive()) {
+      timeEditStop();
     } else if (event == BUTTON_ENC_SHORT && timeEditIsActive()) {
       timeEditButtonPress();
     }
@@ -883,6 +885,8 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     if (event == BUTTON_ENC_LONG) {
       int8_t currentOffset = getUTCOffset();
       offsetEditStart(currentOffset);
+    } else if (event == BUTTON_RIGHT_SHORT && offsetEditIsActive()) {
+      offsetEditStop();
     } else if (event == BUTTON_ENC_SHORT && offsetEditIsActive()) {
       offsetEditStop();
     }
@@ -931,6 +935,8 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
   } else if (mode == MODE_TIMER) {
     if (event == BUTTON_ENC_LONG) {
       timerEditStart(0);
+    } else if (event == BUTTON_RIGHT_SHORT && timerEditIsActive()) {
+      timerEditFinish();
     } else if (event == BUTTON_ENC_SHORT && timerEditIsActive()) {
       timerEditButtonPress();
     } else if (event == BUTTON_ENC_SHORT) {
