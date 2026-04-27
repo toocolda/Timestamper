@@ -14,19 +14,29 @@ struct StopwatchState {
 
 static StopwatchState g_sw = {false, 0, 0};
 
+static uint32_t stopwatchTicksToTenths(uint32_t ticks256, bool running) {
+  uint32_t tenthsTimes256 = ticks256 * 10UL;
+
+  // Hybrid smoothing: while running, round to nearest tenth for a steadier
+  // visual cadence on the LCD. When stopped, use floor so stored elapsed time
+  // never over-reports.
+  uint32_t tenths = running ? ((tenthsTimes256 + 128UL) / 256UL)
+                            : (tenthsTimes256 / 256UL);
+  if (tenths > kMaxTenths) tenths = kMaxTenths;
+  return tenths;
+}
+
 static uint32_t stopwatchComputeTenths(uint8_t index) {
   (void)index;
 
   if (!g_sw.running) {
-    uint32_t tenths = (g_sw.accumulatedTicks256 * 10UL) / 256UL;
-    if (tenths > kMaxTenths) tenths = kMaxTenths;
-    return tenths;
+    return stopwatchTicksToTenths(g_sw.accumulatedTicks256, false);
   }
 
   uint32_t nowTicks = crystalTimeGetTicks256();
   uint32_t elapsedTicks = nowTicks - g_sw.runStartTicks256;
   uint32_t totalTicks = g_sw.accumulatedTicks256 + elapsedTicks;
-  uint32_t totalTenths = (totalTicks * 10UL) / 256UL;
+  uint32_t totalTenths = stopwatchTicksToTenths(totalTicks, true);
 
   // Saturate and auto-stop at max range.
   if (totalTicks >= kMaxTicks256 || totalTenths >= kMaxTenths) {
