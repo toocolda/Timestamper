@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "core/config.h"
 #include "features/timer.h"
+#include "hardware/buzzer.h"
 
 static const int32_t kMaxSeconds = 99L * 3600L + 59L * 60L + 59L;
 static const int32_t kDefaultPresetSeconds = 0L;  // FUEL TIMER default = 00:00:00
@@ -60,7 +61,7 @@ static int32_t timerCurrentSignedSeconds(uint8_t index) {
 static void timerAlarmPatternUpdate(bool alarmWanted) {
   if (!alarmWanted) {
     if (g_alarmToneOn) {
-      noTone(PIN_BUZZER);
+      buzzerStop();
       g_alarmToneOn = false;
     }
     g_alarmStep = 0;
@@ -90,13 +91,13 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
 
   // Even steps with tones, odd steps silent.
   if (g_alarmStep == 0 || g_alarmStep == 4) {
-    tone(PIN_BUZZER, 1400);
+    buzzerStart(1400);
     g_alarmToneOn = true;
   } else if (g_alarmStep == 2) {
-    tone(PIN_BUZZER, 900);
+    buzzerStart(900);
     g_alarmToneOn = true;
   } else {
-    noTone(PIN_BUZZER);
+    buzzerStop();
     g_alarmToneOn = false;
   }
 }

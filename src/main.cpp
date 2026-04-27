@@ -14,6 +14,7 @@
 #include "features/timer.h"
 #include "hardware/backlight.h"
 #include "hardware/battery.h"
+#include "hardware/buzzer.h"
 
 // Runtime architecture (main loop):
 // 1) Run background engines (timer/backlight/battery)
@@ -34,7 +35,6 @@ TinyGPSPlus gps;
 #define BTN_LEFT PIN_BTN_LEFT
 #define BTN_RIGHT PIN_BTN_RIGHT
 #define BTN_TOP PIN_BTN_TOP
-#define BUZZER PIN_BUZZER
 
 // ===== Encoder =====
 volatile int32_t encoderCount = 0;
@@ -114,6 +114,14 @@ static bool deskSleepShouldRun() {
   return (g_currentMode == MODE_LOCAL_ONLY) && !timerAnyRunning() && !timerAnyAlarmActive();
 }
 
+static void deskSleepDiscardPendingTicks() {
+  uint32_t ticks;
+  noInterrupts();
+  ticks = s_deskWakeTicks;
+  interrupts();
+  s_deskAppliedTicks = ticks;
+}
+
 static void deskSleepMaybeRunOneCycle() {
   if (!deskSleepShouldRun()) {
     deskSleepDisableTimer2Async();
@@ -125,6 +133,9 @@ static void deskSleepMaybeRunOneCycle() {
   // 5-second grace period: let the normal loop run freely after entering Desk Mode
   // so the display draws fully and mode-change buzz completes before sleeping.
   if (millis() - s_deskEnterMs < kDeskSleepDelayMs) {
+    // During grace period, wall time already advances via millis().
+    // Discard async ticks so they are not applied later as a jump.
+    deskSleepDiscardPendingTicks();
     return;
   }
 
@@ -133,9 +144,11 @@ static void deskSleepMaybeRunOneCycle() {
   if (s_deskInputWake) {
     s_deskInputWake = false;
     s_deskStayAwakeUntilMs = millis() + kDeskInputAwakeMs;
+    deskSleepDiscardPendingTicks();
     return;
   }
   if ((int32_t)(millis() - s_deskStayAwakeUntilMs) < 0) {
+    deskSleepDiscardPendingTicks();
     return;
   }
 
@@ -198,7 +211,7 @@ void setup() {
   pinMode(BTN_LEFT, INPUT_PULLUP);
   pinMode(BTN_RIGHT, INPUT_PULLUP);
   pinMode(BTN_TOP, INPUT_PULLUP);
-  pinMode(BUZZER, OUTPUT);
+  buzzerInit(PIN_BUZZER);
   backlightInit(PIN_BACKLIGHT_BLUE, PIN_BACKLIGHT_RED, PIN_BACKLIGHT_GREEN);
   batteryInit(PIN_BATTERY);
 
@@ -349,8 +362,8 @@ void loop() {
         lastDisplayedMode = newMode;
         g_currentMode = newMode;
 
-        // Leaving desk mode: restore Timer2 before buzzOnce(), otherwise tone()
-        // can sound too short/quiet.
+        // Leaving desk mode: restore Timer2 before buzzOnce() to avoid any
+        // timer-domain transition artifacts during the mode-change beep.
         if (oldMode == MODE_LOCAL_ONLY && newMode != MODE_LOCAL_ONLY) {
           deskSleepDisableTimer2Async();
         }

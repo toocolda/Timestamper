@@ -12,6 +12,7 @@
 #include "time/time_edit.h"
 #include "features/timer.h"
 #include "features/timestamp.h"
+#include "hardware/buzzer.h"
 
 // Module architecture:
 // - Maintains mode-global UI state (selected mode + redraw epoch)
@@ -22,29 +23,26 @@
 extern ST7036 lcd;
 extern TinyGPSPlus gps;
 
-// ===== Buzzer Pin =====
-#define BUZZER PIN_BUZZER
-
 // ===== Global Mode Variables =====
 uint8_t g_currentMode = MODE_UTC_ONLY;
 uint32_t g_modeEpoch = 1;  // Start at 1 so first display triggers a clear and resets all caches
 
 // ===== Buzzer Control =====
 void buzzOnce(uint16_t durationMs) {
-  tone(BUZZER, 1000);  // 1000 Hz tone
+  buzzerStart(1000);  // 1000 Hz tone
   delay(durationMs);
-  noTone(BUZZER);
+  buzzerStop();
 }
 
 static void buzzTimestampStamp() {
   // Distinct two-tone stamp confirmation.
-  tone(BUZZER, 1760);
+  buzzerStart(1760);
   delay(55);
-  noTone(BUZZER);
+  buzzerStop();
   delay(20);
-  tone(BUZZER, 1175);
+  buzzerStart(1175);
   delay(85);
-  noTone(BUZZER);
+  buzzerStop();
 }
 
 // Build compact GPS status token used in the status line:
