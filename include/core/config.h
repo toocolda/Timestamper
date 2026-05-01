@@ -34,6 +34,8 @@
 #define LCD_INIT_DELAY_1 50
 #define LCD_INIT_DELAY_2 200
 #define LCD_CLEAR_DELAY 2
+#define LCD_RESET_PULSE_MS 2
+#define LCD_RESET_READY_MS 10
 
 // ===== I2C Communication =====
 #define LCD_I2C_CMD_MODE 0x00
@@ -50,6 +52,7 @@
 
 // Outputs
 #define PIN_BUZZER 9
+#define PIN_LCD_RESET 10
 #define PIN_BACKLIGHT_BLUE A3
 #define PIN_BACKLIGHT_RED A1
 #define PIN_BACKLIGHT_GREEN A2

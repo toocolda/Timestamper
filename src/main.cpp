@@ -146,6 +146,15 @@ void handleEncoder() {
 
 // ===== Setup =====
 void setup() {
+  // Hardware-reset the LCD (active-low) on PB2 before I2C init commands.
+  pinMode(PIN_LCD_RESET, OUTPUT);
+  digitalWrite(PIN_LCD_RESET, HIGH);
+  delay(1);
+  digitalWrite(PIN_LCD_RESET, LOW);
+  delay(2);
+  digitalWrite(PIN_LCD_RESET, HIGH);
+  delay(10);
+
   Wire.begin();
   lcd.begin();
   crystalTimeInit();
