@@ -38,8 +38,8 @@ TinyGPSPlus gps;
 #define BTN_TOP PIN_BTN_TOP
 
 // ===== Encoder =====
-volatile int32_t encoderCount = 0;
-volatile uint8_t lastState = 0;
+int32_t encoderCount = 0;
+uint8_t lastState = 0;
 
 const int8_t enc_table[16] = {
   0, -1,  1,  0,
@@ -173,9 +173,6 @@ void setup() {
 
   lastState = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
 
-  attachInterrupt(digitalPinToInterrupt(ENC_A), handleEncoder, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ENC_B), handleEncoder, CHANGE);
-
   initButtons();
 
   updateDisplay(g_currentMode);  // Force initial display immediately
@@ -183,6 +180,9 @@ void setup() {
 
 // ===== Loop =====
 void loop() {
+  // Encoder test mode: poll quadrature in main loop instead of interrupts.
+  handleEncoder();
+
   // ===== Background Engines =====
   timerModeUpdate();
   backlightUpdate();
@@ -220,10 +220,7 @@ void loop() {
   }
 
   // ===== Read Encoder =====
-  int32_t encoderValue;
-  noInterrupts();
-  encoderValue = encoderCount;
-  interrupts();
+  int32_t encoderValue = encoderCount;
 
   // Any encoder movement acknowledges active timer alarms.
   static int32_t lastEncoderForAlarmAck = 0;
@@ -288,9 +285,7 @@ void loop() {
     if (wasEditing) {
       // Just exited edit mode - anchor encoder to current mode to prevent jump.
       int32_t anchoredCount = (int32_t)g_currentMode * ENC_DIVISOR;
-      noInterrupts();
       encoderCount = anchoredCount;
-      interrupts();
       encoderValue = anchoredCount;
       lastEncoderForEdit = anchoredCount / ENC_DIVISOR;
       lastDisplayedMode = g_currentMode;  // Preserve current mode
