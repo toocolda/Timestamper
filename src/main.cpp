@@ -116,9 +116,8 @@ static void deskSleepMaybeRunOneCycle() {
   set_sleep_mode(SLEEP_MODE_PWR_SAVE);
   sleep_enable();
 
-  // Enable PCINT2 so button pins 4-7 (ENC_BTN, LEFT, RIGHT, TOP) wake the MCU.
-  // Encoder pins 2/3 already wake via INT0/INT1.
-  PCMSK2 |= (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22) | (1 << PCINT23);
+  // Enable PCINT2 so button pins PD3-PD6 (TOP, ENC_BTN, LEFT, RIGHT) wake the MCU.
+  PCMSK2 |= (1 << PCINT19) | (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22);
   PCICR  |= (1 << PCIE2);
 
   noInterrupts();
@@ -132,7 +131,7 @@ static void deskSleepMaybeRunOneCycle() {
 
   // Disable PCINT2 immediately after wakeup so it doesn't fire outside sleep.
   PCICR  &= (uint8_t)~(1 << PCIE2);
-  PCMSK2 &= (uint8_t)~((1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22) | (1 << PCINT23));
+  PCMSK2 &= (uint8_t)~((1 << PCINT19) | (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22));
 }
 
 void handleEncoder() {
@@ -167,6 +166,13 @@ void setup() {
   pinMode(BTN_LEFT, INPUT_PULLUP);
   pinMode(BTN_RIGHT, INPUT_PULLUP);
   pinMode(BTN_TOP, INPUT_PULLUP);
+
+  // GPS power controls: keep GPS enabled by default.
+  pinMode(PIN_GPS_POWER, OUTPUT);
+  digitalWrite(PIN_GPS_POWER, LOW);    // Active-low high-side switch: LOW = GPS power ON
+  pinMode(PIN_GPS_ENABLE, OUTPUT);
+  digitalWrite(PIN_GPS_ENABLE, HIGH);  // GPS EN asserted
+
   buzzerInit(PIN_BUZZER);
   backlightInit(PIN_BACKLIGHT_BLUE, PIN_BACKLIGHT_RED, PIN_BACKLIGHT_GREEN);
   batteryInit(PIN_BATTERY);

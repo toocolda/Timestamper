@@ -16,10 +16,10 @@ static bool     s_manualOn               = false;
 static uint32_t s_manualOnUntilMs        = 0;
 
 static void writeRgb(bool blueOn, bool redOn, bool greenOn) {
-  // Common-anode RGB: drive LOW to turn channel on, HIGH to turn it off.
-  digitalWrite(s_bluePin, blueOn ? LOW : HIGH);
-  digitalWrite(s_redPin, redOn ? LOW : HIGH);
-  digitalWrite(s_greenPin, greenOn ? LOW : HIGH);
+  // Low-side AO3400 drivers: drive HIGH to turn channel on.
+  digitalWrite(s_bluePin, blueOn ? HIGH : LOW);
+  digitalWrite(s_redPin, redOn ? HIGH : LOW);
+  digitalWrite(s_greenPin, greenOn ? HIGH : LOW);
 }
 
 // ===== Initialize backlight on specified RGB pins =====
