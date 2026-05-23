@@ -158,7 +158,13 @@ void setup() {
   lcd.begin();
   crystalTimeInit();
 
+#if GPS_UART_ENABLED
   Serial.begin(GPS_BAUD);
+#else
+  Serial.end();
+  pinMode(0, INPUT);
+  pinMode(1, INPUT);
+#endif
 
   pinMode(ENC_A, INPUT_PULLUP);
   pinMode(ENC_B, INPUT_PULLUP);
@@ -198,9 +204,11 @@ void loop() {
   }
 
   // ===== Read GPS =====
+#if GPS_UART_ENABLED
   while (Serial.available()) {
     gps.encode(Serial.read());
   }
+#endif
 
   // ===== Handle Button Presses =====
   ButtonEvent_t buttonEvent = handleButtons();

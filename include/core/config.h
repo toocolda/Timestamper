@@ -65,6 +65,7 @@
 
 // ===== GPS Serial =====
 #define GPS_BAUD 9600
+#define GPS_UART_ENABLED 1
 
 // ===== Encoder Quadrature =====
 #define ENC_DIVISOR 2  // Count per half-step
