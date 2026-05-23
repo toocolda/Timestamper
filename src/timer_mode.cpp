@@ -67,11 +67,11 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
       g_alarmToneOn = false;
     }
     g_alarmStep = 0;
-    g_alarmLastStepMs = millis();
+    g_alarmLastStepMs = crystalTimeGetMillis();
     return;
   }
 
-  uint32_t now = millis();
+  uint32_t now = crystalTimeGetMillis();
   uint32_t stepDurMs = 0;
 
   switch (g_alarmStep) {
@@ -84,7 +84,7 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
     default: stepDurMs = 220; break;
   }
 
-  if (now - g_alarmLastStepMs < stepDurMs) {
+  if (!crystalTimeElapsedMs(g_alarmLastStepMs, stepDurMs)) {
     return;
   }
 
@@ -125,11 +125,11 @@ void timerModeUpdate() {
   if (g_timer.running && g_timer.runStartSignedSeconds > 0 && nowSigned <= 0 && !g_timer.alarmTriggered) {
     g_timer.alarmActive = true;
     g_timer.alarmTriggered = true;
-    g_timer.alarmStartedMs = millis();
+    g_timer.alarmStartedMs = crystalTimeGetMillis();
   }
 
   // Auto-clear alarm after timeout if user takes no action.
-  if (g_timer.alarmActive && (millis() - g_timer.alarmStartedMs >= kAlarmAutoClearMs)) {
+  if (g_timer.alarmActive && crystalTimeElapsedMs(g_timer.alarmStartedMs, kAlarmAutoClearMs)) {
     g_timer.alarmActive = false;
   }
 
@@ -224,7 +224,7 @@ void timerEditStart(uint8_t index) {
   g_timerEditIndex = i;
   g_timerEditField = TIMER_EDIT_HOUR;
   g_timerEditSeconds = preset;
-  g_timerEditFlashMs = millis();
+  g_timerEditFlashMs = crystalTimeGetMillis();
   g_timerEditShow = true;
 }
 
@@ -263,7 +263,7 @@ void timerEditButtonPress() {
   if (!g_timerEditActive) return;
 
   g_timerEditShow = true;
-  g_timerEditFlashMs = millis();
+  g_timerEditFlashMs = crystalTimeGetMillis();
 
   if (g_timerEditField == TIMER_EDIT_HOUR) {
     g_timerEditField = TIMER_EDIT_MINUTE;
@@ -297,9 +297,9 @@ void timerEditFinish() {
 
 bool timerEditShouldFlash() {
   if (!g_timerEditActive) return true;
-  if (millis() - g_timerEditFlashMs > kEditFlashIntervalMs) {
+  if (crystalTimeElapsedMs(g_timerEditFlashMs, kEditFlashIntervalMs)) {
     g_timerEditShow = !g_timerEditShow;
-    g_timerEditFlashMs = millis();
+    g_timerEditFlashMs = crystalTimeGetMillis();
   }
   return g_timerEditShow;
 }

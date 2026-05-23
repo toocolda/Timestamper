@@ -54,3 +54,14 @@ uint32_t crystalTimeGetTicks256(void) {
 
   return (sec << 8) | (uint32_t)tcnt;
 }
+
+uint32_t crystalTimeGetMillis(void) {
+  uint32_t ticks256 = crystalTimeGetTicks256();
+  // Convert 1/256 s ticks to ms with truncation for monotonic timing.
+  return (ticks256 * 1000UL) / 256UL;
+}
+
+bool crystalTimeElapsedMs(uint32_t sinceMs, uint32_t intervalMs) {
+  uint32_t nowMs = crystalTimeGetMillis();
+  return (uint32_t)(nowMs - sinceMs) >= intervalMs;
+}

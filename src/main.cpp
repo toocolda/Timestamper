@@ -57,7 +57,7 @@ static void gpsConfigureOutputMaybeRetry() {
   if (!GPS_POWER_DEFAULT_ON || !GPS_ENABLE_DEFAULT_ON) return;
   if (attempts >= 3) return;
 
-  uint32_t now = millis();
+  uint32_t now = crystalTimeGetMillis();
   if ((int32_t)(now - nextAttemptMs) < 0) return;
 
   gpsConfigureOutput();
@@ -88,7 +88,7 @@ const int8_t enc_table[16] = {
 // ===== Desk-Mode Sleep Control =====
 static volatile bool s_deskInputWake = false;
 static bool s_deskSleepArmed = false;
-static uint32_t s_deskEnterMs = 0;  // millis() when Timer2 sleep was first armed
+static uint32_t s_deskEnterMs = 0;  // Crystal-ms when Timer2 sleep was first armed
 static uint32_t s_deskStayAwakeUntilMs = 0;
 static uint32_t s_deskLastDisplaySecond = 0xFFFFFFFFUL;
 static const uint32_t kDeskSleepDelayMs = 5000;  // Grace period before first sleep
@@ -121,13 +121,13 @@ static void deskSleepMaybeRunOneCycle() {
 
   if (!s_deskSleepArmed) {
     s_deskSleepArmed = true;
-    s_deskEnterMs = millis();
+    s_deskEnterMs = crystalTimeGetMillis();
     s_deskLastDisplaySecond = crystalTimeGetSeconds();
   }
 
   // 5-second grace period: let the normal loop run freely after entering Desk Mode
   // so the display draws fully and mode-change buzz completes before sleeping.
-  if (millis() - s_deskEnterMs < kDeskSleepDelayMs) {
+  if (!crystalTimeElapsedMs(s_deskEnterMs, kDeskSleepDelayMs)) {
     return;
   }
 
@@ -135,10 +135,10 @@ static void deskSleepMaybeRunOneCycle() {
   // logic (millis-based) can run before sleeping again.
   if (s_deskInputWake) {
     s_deskInputWake = false;
-    s_deskStayAwakeUntilMs = millis() + kDeskInputAwakeMs;
+    s_deskStayAwakeUntilMs = crystalTimeGetMillis() + kDeskInputAwakeMs;
     return;
   }
-  if ((int32_t)(millis() - s_deskStayAwakeUntilMs) < 0) {
+  if ((int32_t)(crystalTimeGetMillis() - s_deskStayAwakeUntilMs) < 0) {
     return;
   }
 
@@ -253,7 +253,7 @@ void loop() {
 
   // Keep desk mode awake while user is actively pressing buttons.
   if (g_currentMode == MODE_LOCAL_ONLY && buttonEvent != BUTTON_NONE) {
-    s_deskStayAwakeUntilMs = millis() + kDeskInputAwakeMs;
+    s_deskStayAwakeUntilMs = crystalTimeGetMillis() + kDeskInputAwakeMs;
   }
   
   // Send button events to modes for handling
@@ -268,7 +268,7 @@ void loop() {
   // Force refresh on first loop iteration (in case g_modeEpoch incremented before reaching here)
   if (firstLoop) {
     firstLoop = false;
-    lastUpdate = millis();  // Sync after initial setup() display
+    lastUpdate = crystalTimeGetMillis();  // Sync after initial setup() display
   }
 
   // ===== Read Encoder =====
@@ -377,8 +377,8 @@ void loop() {
     refreshMs = 100;
   }
 
-  if (millis() - lastUpdate >= refreshMs) {
-    lastUpdate = millis();
+  if (crystalTimeElapsedMs(lastUpdate, refreshMs)) {
+    lastUpdate = crystalTimeGetMillis();
     updateDisplay(g_currentMode);
   }
 

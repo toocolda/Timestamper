@@ -7,6 +7,7 @@
 #include "core/config.h"
 #include "time/local_time.h"
 #include "time/mcu_time.h"
+#include "time/crystal_time.h"
 #include "display/st7036.h"
 #include "features/stopwatch.h"
 #include "time/time_edit.h"
@@ -360,20 +361,6 @@ void displayModeUTCLocal() {
     // ===== NORMAL DISPLAY =====
     int8_t offset = getUTCOffset();
 
-    if (!timeValid && !hasManualTime()) {
-      if (lastTimeValid || lastOffsetShown != offset) {
-        lcd.setCursor(0, 0);
-        lcd.print("MM-DD HH:MM:SS UTC ");
-        lcd.setCursor(0, 1);
-        lcd.print("MM-DD HH:MM:SS +00 ");
-        lastTimeValid = false;
-        lastOffsetShown = offset;
-        lastSecUTC = -1;
-        lastSecLocal = -1;
-      }
-      return;
-    }
-
     TimeEdit_t utcTime = mcuTimeGetCurrent();
     TimeEdit_t localTime = calculateLocalTime(utcTime);
     
@@ -465,10 +452,10 @@ void displayModeTimestampReview() {
 
   bool markerVisible = true;
   if (s_tsScrollActive) {
-    markerVisible = ((millis() / (uint32_t)kTsScrollBlinkMs) % 2UL) == 0UL;
+    markerVisible = ((crystalTimeGetMillis() / (uint32_t)kTsScrollBlinkMs) % 2UL) == 0UL;
   }
 
-  bool deleteAnimActive = millis() < s_tsDeleteAnimUntil;
+  bool deleteAnimActive = (int32_t)(s_tsDeleteAnimUntil - crystalTimeGetMillis()) > 0;
 
   uint32_t sig = ((uint32_t)count)
                | ((uint32_t)s_tsSelectedNewest << 8)
@@ -943,7 +930,7 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
         } else if (s_tsSelectedNewest >= count) {
           s_tsSelectedNewest = (uint8_t)(count - 1);
         }
-        s_tsDeleteAnimUntil = millis() + (uint32_t)kTsDeleteCueMs;
+        s_tsDeleteAnimUntil = crystalTimeGetMillis() + (uint32_t)kTsDeleteCueMs;
         g_modeEpoch++;
       }
     } else if (event == BUTTON_LEFT_LONG) {

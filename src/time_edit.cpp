@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "time/time_edit.h"
 #include "time/mcu_time.h"
+#include "time/crystal_time.h"
 
 // ===== Time Edit State =====
 static TimeEdit_t g_editData;
@@ -29,8 +30,8 @@ void timeEditStart(TimeEdit_t* timeData) {
   
   g_isEditing = true;
   g_currentField = EDIT_FIELD_YEAR;
-  g_lastInputTime = millis();
-  g_flashToggleTime = millis();
+  g_lastInputTime = crystalTimeGetMillis();
+  g_flashToggleTime = crystalTimeGetMillis();
   g_showFlash = true;
 }
 
@@ -49,7 +50,7 @@ bool timeEditIsActive() {
   if (!g_isEditing) return false;
   
   // Check for inactivity timeout
-  if (millis() - g_lastInputTime > INACTIVITY_TIMEOUT_MS) {
+  if (crystalTimeElapsedMs(g_lastInputTime, INACTIVITY_TIMEOUT_MS)) {
     timeEditStop();
     return false;
   }
@@ -62,7 +63,7 @@ void timeEditRotaryInput(int32_t delta) {
   if (!g_isEditing) return;
   if (delta == 0) return;
   
-  g_lastInputTime = millis();
+  g_lastInputTime = crystalTimeGetMillis();
   int direction = (delta > 0) ? 1 : -1;
   
   switch (g_currentField) {
@@ -130,9 +131,9 @@ void timeEditRotaryInput(int32_t delta) {
 void timeEditButtonPress() {
   if (!g_isEditing) return;
   
-  g_lastInputTime = millis();
+  g_lastInputTime = crystalTimeGetMillis();
   g_showFlash = true;
-  g_flashToggleTime = millis();
+  g_flashToggleTime = crystalTimeGetMillis();
   
   switch (g_currentField) {
     case EDIT_FIELD_YEAR:
@@ -173,9 +174,9 @@ EditField_t timeEditGetCurrentField() {
 bool timeEditShouldFlash() {
   if (!g_isEditing) return true;
   
-  if (millis() - g_flashToggleTime > FLASH_INTERVAL_MS) {
+  if (crystalTimeElapsedMs(g_flashToggleTime, FLASH_INTERVAL_MS)) {
     g_showFlash = !g_showFlash;
-    g_flashToggleTime = millis();
+    g_flashToggleTime = crystalTimeGetMillis();
   }
   
   return g_showFlash;
