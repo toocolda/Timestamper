@@ -67,6 +67,10 @@
 #define GPS_BAUD 9600
 #define GPS_UART_ENABLED 1
 
+// ===== GPS Boot Control =====
+#define GPS_POWER_DEFAULT_ON 1
+#define GPS_ENABLE_DEFAULT_ON 1
+
 // ===== Encoder Quadrature =====
 #define ENC_DIVISOR 2  // Count per half-step
 

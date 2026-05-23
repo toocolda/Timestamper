@@ -23,6 +23,37 @@
 extern ST7036 lcd;
 extern TinyGPSPlus gps;
 
+static TinyGPSCustom s_gnggaAltitude(gps, "GNGGA", 9);
+static TinyGPSCustom s_gpggaAltitude(gps, "GPGGA", 9);
+
+static bool gpsTryGetAltitudeFeet(int16_t* altFeetOut) {
+  if (altFeetOut == nullptr) return false;
+
+  if (gps.altitude.isValid()) {
+    double altFeet = gps.altitude.feet();
+    if (altFeet < -999.0) altFeet = -999.0;
+    if (altFeet > 32767.0) altFeet = 32767.0;
+    *altFeetOut = (int16_t)(altFeet + (altFeet >= 0.0 ? 0.5 : -0.5));
+    return true;
+  }
+
+  const char* rawAlt = nullptr;
+  if (s_gnggaAltitude.isValid() && s_gnggaAltitude.value()[0] != '\0') {
+    rawAlt = s_gnggaAltitude.value();
+  } else if (s_gpggaAltitude.isValid() && s_gpggaAltitude.value()[0] != '\0') {
+    rawAlt = s_gpggaAltitude.value();
+  }
+
+  if (rawAlt == nullptr) return false;
+
+  double altMeters = atof(rawAlt);
+  double altFeet = altMeters * 3.280839895;
+  if (altFeet < -999.0) altFeet = -999.0;
+  if (altFeet > 32767.0) altFeet = 32767.0;
+  *altFeetOut = (int16_t)(altFeet + (altFeet >= 0.0 ? 0.5 : -0.5));
+  return true;
+}
+
 // ===== Global Mode Variables =====
 uint8_t g_currentMode = MODE_UTC_ONLY;
 uint32_t g_modeEpoch = 1;  // Start at 1 so first display triggers a clear and resets all caches
@@ -749,11 +780,11 @@ void displayModeGpsInfo() {
 
   bool gsValid = gps.speed.isValid();
   bool hdgValid = gps.course.isValid();
-  bool altValid = gps.altitude.isValid();
+  int16_t altFeet = 0;
+  bool altValid = gpsTryGetAltitudeFeet(&altFeet);
 
   uint16_t gsTenths = 0;
   uint16_t headingDeg = 0;
-  int16_t altFeet = 0;
 
   if (gsValid) {
     double gsKnots = gps.speed.knots();
@@ -768,13 +799,6 @@ void displayModeGpsInfo() {
     while (hdg >= 360.0) hdg -= 360.0;
     headingDeg = (uint16_t)(hdg + 0.5);
     if (headingDeg >= 360U) headingDeg = 0;
-  }
-
-  if (altValid) {
-    double alt = gps.altitude.feet();
-    if (alt < -999.0) alt = -999.0;
-    if (alt > 32767.0) alt = 32767.0;
-    altFeet = (int16_t)(alt + (alt >= 0.0 ? 0.5 : -0.5));
   }
 
   uint32_t sig = 0;
@@ -801,7 +825,7 @@ void displayModeGpsInfo() {
     snprintf(hdgStr, sizeof(hdgStr), "%03u", (unsigned int)headingDeg);
   }
   if (altValid) {
-    snprintf(altStr, sizeof(altStr), "%7.0f", gps.altitude.feet());
+    snprintf(altStr, sizeof(altStr), "%7d", (int)altFeet);
   }
 
   lcd.setCursor(0, 0);

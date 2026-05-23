@@ -29,6 +29,43 @@ ST7036 lcd(LCD_ADDR);
 // ===== GPS =====
 TinyGPSPlus gps;
 
+static void gpsSendCommand(const char* command) {
+#if GPS_UART_ENABLED
+  if (command == nullptr) return;
+  Serial.print(command);
+  Serial.print("\r\n");
+  Serial.flush();
+#else
+  (void)command;
+#endif
+}
+
+static void gpsConfigureOutput() {
+#if GPS_UART_ENABLED
+  // Keep the sentences the watch actually uses:
+  // GGA (fix, sats, altitude) and RMC (time/date, speed, course).
+  // Drop GLL/GSA/GSV/VTG/ZDA/TXT to reduce UART load at 9600 baud.
+  gpsSendCommand("$PCAS03,1,0,0,0,1,0,0,0*02");
+#endif
+}
+
+static void gpsConfigureOutputMaybeRetry() {
+#if GPS_UART_ENABLED
+  static uint8_t attempts = 0;
+  static uint32_t nextAttemptMs = 1000;
+
+  if (!GPS_POWER_DEFAULT_ON || !GPS_ENABLE_DEFAULT_ON) return;
+  if (attempts >= 3) return;
+
+  uint32_t now = millis();
+  if ((int32_t)(now - nextAttemptMs) < 0) return;
+
+  gpsConfigureOutput();
+  attempts++;
+  nextAttemptMs += 1000;
+#endif
+}
+
 // ===== Pins =====
 #define ENC_A PIN_ENC_A
 #define ENC_B PIN_ENC_B
@@ -175,9 +212,9 @@ void setup() {
 
   // GPS power controls: keep GPS enabled by default.
   pinMode(PIN_GPS_POWER, OUTPUT);
-  digitalWrite(PIN_GPS_POWER, LOW);    // Active-low high-side switch: LOW = GPS power ON
+  digitalWrite(PIN_GPS_POWER, GPS_POWER_DEFAULT_ON ? LOW : HIGH);
   pinMode(PIN_GPS_ENABLE, OUTPUT);
-  digitalWrite(PIN_GPS_ENABLE, HIGH);  // GPS EN asserted
+  digitalWrite(PIN_GPS_ENABLE, GPS_ENABLE_DEFAULT_ON ? HIGH : LOW);
 
   buzzerInit(PIN_BUZZER);
   backlightInit(PIN_BACKLIGHT_BLUE, PIN_BACKLIGHT_RED, PIN_BACKLIGHT_GREEN);
@@ -198,6 +235,7 @@ void loop() {
   // ===== Background Engines =====
   timerModeUpdate();
   backlightUpdate();
+  gpsConfigureOutputMaybeRetry();
   // Battery is only shown in UTC-only mode, so avoid unnecessary ADC reads elsewhere.
   if (g_currentMode == MODE_UTC_ONLY) {
     batteryUpdate();
