@@ -29,6 +29,87 @@ ST7036 lcd(LCD_ADDR);
 // ===== GPS =====
 TinyGPSPlus gps;
 
+enum GpsSyncState : uint8_t {
+  GPS_SYNC_IDLE = 0,
+  GPS_SYNC_SEARCHING
+};
+
+static bool s_gpsPowerOn = false;
+static GpsSyncState s_gpsSyncState = GPS_SYNC_IDLE;
+static uint32_t s_gpsSyncStartedMs = 0;
+static const uint32_t kGpsSyncTimeoutMs = 120000;
+
+static uint8_t s_gpsCfgAttempts = 0;
+static uint32_t s_gpsCfgNextAttemptMs = 1000;
+
+static void gpsSetPower(bool on) {
+  if (on == s_gpsPowerOn) return;
+
+  s_gpsPowerOn = on;
+  digitalWrite(PIN_GPS_POWER, on ? LOW : HIGH);
+  digitalWrite(PIN_GPS_ENABLE, on ? HIGH : LOW);
+
+  // Re-run output config sequence on each power-up.
+  s_gpsCfgAttempts = 0;
+  s_gpsCfgNextAttemptMs = crystalTimeGetMillis() + 1000;
+}
+
+void gpsSyncRequest(void) {
+  s_gpsSyncState = GPS_SYNC_SEARCHING;
+  s_gpsSyncStartedMs = crystalTimeGetMillis();
+  gpsSetPower(true);
+  g_modeEpoch++;
+}
+
+bool gpsSyncIsSearching(void) {
+  return s_gpsSyncState == GPS_SYNC_SEARCHING;
+}
+
+uint16_t gpsSyncGetRemainingSeconds(void) {
+  if (s_gpsSyncState != GPS_SYNC_SEARCHING) return 0;
+  uint32_t elapsed = crystalTimeGetMillis() - s_gpsSyncStartedMs;
+  if (elapsed >= kGpsSyncTimeoutMs) return 0;
+  return (uint16_t)((kGpsSyncTimeoutMs - elapsed + 999UL) / 1000UL);
+}
+
+uint16_t gpsSyncGetElapsedSeconds(void) {
+  if (s_gpsSyncState != GPS_SYNC_SEARCHING) return 0;
+  uint32_t elapsed = crystalTimeGetMillis() - s_gpsSyncStartedMs;
+  return (uint16_t)(elapsed / 1000UL);
+}
+
+static void gpsSyncUpdate(void) {
+  if (s_gpsSyncState != GPS_SYNC_SEARCHING) return;
+
+  if (isGPSTimeReliable()) {
+    TimeEdit_t gpsTime;
+    gpsTime.year = gps.date.year();
+    gpsTime.month = gps.date.month();
+    gpsTime.day = gps.date.day();
+    gpsTime.hour = gps.time.hour();
+    gpsTime.minute = gps.time.minute();
+    gpsTime.second = gps.time.second();
+    mcuTimeSync(&gpsTime);
+
+    s_gpsSyncState = GPS_SYNC_IDLE;
+    g_modeEpoch++;
+    return;
+  }
+
+  if (crystalTimeElapsedMs(s_gpsSyncStartedMs, kGpsSyncTimeoutMs)) {
+    s_gpsSyncState = GPS_SYNC_IDLE;
+    g_modeEpoch++;
+  }
+}
+
+static void gpsApplyPowerPolicy(void) {
+  // Keep GPS off globally except:
+  // 1) Active sync sessions (boot/manual), and
+  // 2) GPS Info mode.
+  bool shouldBeOn = gpsSyncIsSearching() || (g_currentMode == MODE_GPS_INFO);
+  gpsSetPower(shouldBeOn);
+}
+
 static void gpsSendCommand(const char* command) {
 #if GPS_UART_ENABLED
   if (command == nullptr) return;
@@ -51,18 +132,15 @@ static void gpsConfigureOutput() {
 
 static void gpsConfigureOutputMaybeRetry() {
 #if GPS_UART_ENABLED
-  static uint8_t attempts = 0;
-  static uint32_t nextAttemptMs = 1000;
-
-  if (!GPS_POWER_DEFAULT_ON || !GPS_ENABLE_DEFAULT_ON) return;
-  if (attempts >= 3) return;
+  if (!s_gpsPowerOn) return;
+  if (s_gpsCfgAttempts >= 3) return;
 
   uint32_t now = crystalTimeGetMillis();
-  if ((int32_t)(now - nextAttemptMs) < 0) return;
+  if ((int32_t)(now - s_gpsCfgNextAttemptMs) < 0) return;
 
   gpsConfigureOutput();
-  attempts++;
-  nextAttemptMs += 1000;
+  s_gpsCfgAttempts++;
+  s_gpsCfgNextAttemptMs += 1000;
 #endif
 }
 
@@ -210,11 +288,10 @@ void setup() {
   pinMode(BTN_RIGHT, INPUT_PULLUP);
   pinMode(BTN_TOP, INPUT_PULLUP);
 
-  // GPS power controls: keep GPS enabled by default.
+  // GPS power controls are managed dynamically by mode/sync policy.
   pinMode(PIN_GPS_POWER, OUTPUT);
-  digitalWrite(PIN_GPS_POWER, GPS_POWER_DEFAULT_ON ? LOW : HIGH);
   pinMode(PIN_GPS_ENABLE, OUTPUT);
-  digitalWrite(PIN_GPS_ENABLE, GPS_ENABLE_DEFAULT_ON ? HIGH : LOW);
+  gpsSetPower(false);
 
   buzzerInit(PIN_BUZZER);
   backlightInit(PIN_BACKLIGHT_BLUE, PIN_BACKLIGHT_RED, PIN_BACKLIGHT_GREEN);
@@ -223,6 +300,9 @@ void setup() {
   lastState = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
 
   initButtons();
+
+  // Boot behavior: search for GPS time for up to 2 minutes, then power off.
+  gpsSyncRequest();
 
   updateDisplay(g_currentMode);  // Force initial display immediately
 }
@@ -235,6 +315,7 @@ void loop() {
   // ===== Background Engines =====
   timerModeUpdate();
   backlightUpdate();
+  gpsApplyPowerPolicy();
   gpsConfigureOutputMaybeRetry();
   // Battery is only shown in UTC-only mode, so avoid unnecessary ADC reads elsewhere.
   if (g_currentMode == MODE_UTC_ONLY) {
@@ -243,10 +324,14 @@ void loop() {
 
   // ===== Read GPS =====
 #if GPS_UART_ENABLED
-  while (Serial.available()) {
-    gps.encode(Serial.read());
+  if (s_gpsPowerOn) {
+    while (Serial.available()) {
+      gps.encode(Serial.read());
+    }
   }
 #endif
+
+  gpsSyncUpdate();
 
   // ===== Handle Button Presses =====
   ButtonEvent_t buttonEvent = handleButtons();
@@ -362,6 +447,9 @@ void loop() {
 
         g_modeEpoch++;  // Signal mode change to all display functions
         buzzOnce(100);  // Buzz for 100ms on mode change
+
+        // Apply power policy immediately on mode transition.
+        gpsApplyPowerPolicy();
       }
     } else {
       // Skip mode change this iteration

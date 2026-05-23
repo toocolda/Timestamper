@@ -4,6 +4,7 @@
 #include "hardware/backlight.h"
 #include "hardware/battery.h"
 #include "hardware/buttons.h"
+#include "core/modes.h"
 #include "core/config.h"
 #include "time/local_time.h"
 #include "time/mcu_time.h"
@@ -89,22 +90,6 @@ static void buildGpsStatus(char out[3], bool timeReliable, int satCount) {
   } else {
     strcpy(out, "TI");
   }
-}
-
-// Keep MCU clock disciplined to GPS when valid, unless manual-set grace period is active.
-static void syncMcuFromGpsIfAllowed(bool timeReliable) {
-  if (!timeReliable || shouldSkipGPSSync()) {
-    return;
-  }
-
-  TimeEdit_t gpsTime;
-  gpsTime.year = gps.date.year();
-  gpsTime.month = gps.date.month();
-  gpsTime.day = gps.date.day();
-  gpsTime.hour = gps.time.hour();
-  gpsTime.minute = gps.time.minute();
-  gpsTime.second = gps.time.second();
-  mcuTimeSync(&gpsTime);
 }
 
 // ===== GPS Validation Helper =====
@@ -242,16 +227,9 @@ void displayModeUTCOnly() {
     
   } else {
     // ===== NORMAL DISPLAY - Uses MCU time (ticks independently) =====
-    // GPS sync happens here: MCU clock is continuously synced to GPS when GPS signal is valid
-    // This allows GPS to provide periodic correction while MCU provides independent ticking
     bool timeValid = isGPSTimeReliable();
     int sat = gps.satellites.value();
-    
-    // GPS SYNC: Every display update, if GPS is valid, MCU time syncs to GPS
-    // (see line ~168 in modes.cpp, displayModeUTCOnly function)
-    // BUT: Skip GPS sync if manual time was just set (5 second grace period)
-    syncMcuFromGpsIfAllowed(timeValid);
-    
+
     // Get current time from MCU (ticks based on elapsed ms)
     TimeEdit_t currentTime = mcuTimeGetCurrent();
     int h = currentTime.hour;
@@ -279,10 +257,18 @@ void displayModeUTCOnly() {
       
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
-      uint8_t batPercent = batteryGetPercentage();
-      snprintf(buf2, LCD_BUF_SIZE,
-               "GPS:%s SAT:%02d BAT:%02d",
-               gpsStatus, sat, batPercent);
+      if (gpsSyncIsSearching()) {
+        uint16_t remain = gpsSyncGetRemainingSeconds();
+        uint16_t elapsed = gpsSyncGetElapsedSeconds();
+        snprintf(buf2, LCD_BUF_SIZE,
+                 "SYNC %03us SAT:%02d %03u",
+                 (unsigned int)elapsed, sat, (unsigned int)remain);
+      } else {
+        uint8_t batPercent = batteryGetPercentage();
+        snprintf(buf2, LCD_BUF_SIZE,
+                 "GPS:%s SAT:%02d BAT:%02d",
+                 gpsStatus, sat, batPercent);
+      }
       lcd.print(buf2);
       
       lastSec = s;
@@ -327,9 +313,6 @@ void displayModeUTCLocal() {
     }
   }
 
-  bool timeValid = isGPSTimeReliable();
-  syncMcuFromGpsIfAllowed(timeValid);
-  
   if (offsetEditMode) {
     // ===== OFFSET EDIT DISPLAY =====
     TimeEdit_t utcTime = mcuTimeGetCurrent();
@@ -887,6 +870,8 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     if (event == BUTTON_ENC_LONG) {
       TimeEdit_t currentTime = mcuTimeGetCurrent();
       timeEditStart(&currentTime);
+    } else if (event == BUTTON_RIGHT_LONG && !timeEditIsActive()) {
+      gpsSyncRequest();
     } else if (event == BUTTON_RIGHT_SHORT && timeEditIsActive()) {
       timeEditStop();
     } else if (event == BUTTON_ENC_SHORT && timeEditIsActive()) {

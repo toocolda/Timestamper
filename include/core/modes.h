@@ -5,7 +5,7 @@
  * @brief UI mode dispatcher and state management
  *
  * Manages the 7 display modes:
- * - UTC Only: GPS time display
+ * - UTC Only: UTC display with optional GPS time sync actions
  * - UTC/Local: Dual timezone display
  * - Timestamp Review: Browse & manage saved timestamps
  * - Stopwatch: Single stopwatch
@@ -30,6 +30,13 @@ void updateDisplay(uint8_t mode);
  * @param event Button event to process
  */
 void handleModeEvent(uint8_t mode, ButtonEvent_t event);
+
+// ===== GPS Sync Coordination =====
+bool isGPSTimeReliable(void);
+void gpsSyncRequest(void);
+bool gpsSyncIsSearching(void);
+uint16_t gpsSyncGetRemainingSeconds(void);
+uint16_t gpsSyncGetElapsedSeconds(void);
 
 // ===== Mode State =====
 extern uint8_t g_currentMode;
