@@ -279,7 +279,7 @@ void displayModeUTCOnly() {
         snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC TMO TRY  BAT:%02u"),
                    (unsigned int)batPercent);
       } else {
-        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("              BAT:%02u"),
+        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC NO       BAT:%02u"),
                    (unsigned int)batPercent);
       }
       lcd.print(buf2);

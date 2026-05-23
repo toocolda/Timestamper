@@ -2,6 +2,7 @@
 #include "time/time_edit.h"
 #include "time/mcu_time.h"
 #include "time/crystal_time.h"
+#include "core/modes.h"
 
 // ===== Time Edit State =====
 static TimeEdit_t g_editData;
@@ -39,6 +40,7 @@ void timeEditStart(TimeEdit_t* timeData) {
 void timeEditStop() {
   if (g_isEditing && g_currentField != EDIT_FIELD_NONE) {
     setManualTime(&g_editData);
+    gpsSyncClearLastResult();
     // Don't sync MCU time - let manual time display directly without elapsed calculation
   }
   g_isEditing = false;

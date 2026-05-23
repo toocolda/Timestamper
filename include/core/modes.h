@@ -45,6 +45,7 @@ uint16_t gpsSyncGetRemainingSeconds(void);
 uint16_t gpsSyncGetElapsedSeconds(void);
 GpsSyncResult gpsSyncGetLastResult(void);
 uint16_t gpsSyncGetLastResultAgeSeconds(void);
+void gpsSyncClearLastResult(void);
 
 // ===== Mode State =====
 extern uint8_t g_currentMode;

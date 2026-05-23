@@ -94,6 +94,12 @@ uint16_t gpsSyncGetLastResultAgeSeconds(void) {
   return (uint16_t)ageSec;
 }
 
+void gpsSyncClearLastResult(void) {
+  s_gpsSyncLastResult = GPS_SYNC_RESULT_NONE;
+  s_gpsSyncLastResultMs = 0;
+  g_modeEpoch++;
+}
+
 static void gpsSyncUpdate(void) {
   if (s_gpsSyncState != GPS_SYNC_SEARCHING) return;
 
