@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "core/config.h"
 #include "hardware/buttons.h"
+#include "time/crystal_time.h"
 
 // ===== Button Configuration =====
 #define LONG_PRESS_TIME_MS 500  // Time to consider a press as "long"
@@ -35,9 +36,12 @@ void initButtons() {
 // ===== Handle Button Presses =====
 ButtonEvent_t handleButtons() {
   static uint32_t lastDebounceTime = 0;
+  // Use the crystal-backed clock here so debounce timing remains correct while
+  // the MCU is in PWR_SAVE sleep and the CPU millis() counter is paused.
+  uint32_t nowMs = crystalTimeGetMillis();
   
   // Debounce check
-  if (millis() - lastDebounceTime < DEBOUNCE_TIME_MS) {
+  if (nowMs - lastDebounceTime < DEBOUNCE_TIME_MS) {
     return BUTTON_NONE;
   }
   
@@ -47,18 +51,18 @@ ButtonEvent_t handleButtons() {
     // Transition from not pressed to pressed
     if (isPressed && !buttons[i].lastPressed) {
       buttons[i].lastPressed = true;
-      buttons[i].pressStartTime = millis();
+      buttons[i].pressStartTime = nowMs;
       buttons[i].longPressReported = false;
-      lastDebounceTime = millis();
+      lastDebounceTime = nowMs;
     }
     
     // Button is being held
     if (isPressed && buttons[i].lastPressed) {
       // Check for long press if not already reported
       if (!buttons[i].longPressReported && 
-          (millis() - buttons[i].pressStartTime) >= LONG_PRESS_TIME_MS) {
+          (nowMs - buttons[i].pressStartTime) >= LONG_PRESS_TIME_MS) {
         buttons[i].longPressReported = true;
-        lastDebounceTime = millis();
+        lastDebounceTime = nowMs;
         
         // Return long press event
         switch (i) {
@@ -73,9 +77,9 @@ ButtonEvent_t handleButtons() {
     // Transition from pressed to not pressed
     if (!isPressed && buttons[i].lastPressed) {
       buttons[i].lastPressed = false;
-      lastDebounceTime = millis();
+      lastDebounceTime = nowMs;
       
-      uint32_t pressDuration = millis() - buttons[i].pressStartTime;
+      uint32_t pressDuration = nowMs - buttons[i].pressStartTime;
       
       // If it was a short press (released before long press time)
       if (!buttons[i].longPressReported && pressDuration < LONG_PRESS_TIME_MS) {

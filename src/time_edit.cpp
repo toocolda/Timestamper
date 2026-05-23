@@ -40,6 +40,8 @@ void timeEditStart(TimeEdit_t* timeData) {
 void timeEditStop() {
   if (g_isEditing && g_currentField != EDIT_FIELD_NONE) {
     setManualTime(&g_editData);
+    // Manual edits intentionally clear the previous GPS result so UTC mode
+    // shows that the clock is user-set rather than freshly GPS-verified.
     gpsSyncClearLastResult();
     // Don't sync MCU time - let manual time display directly without elapsed calculation
   }
