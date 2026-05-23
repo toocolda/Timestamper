@@ -1,6 +1,7 @@
 {
     "chat.tools.terminal.autoApprove": {
         "pio": true,
-        "Get-Command": true
+        "Get-Command": true,
+        "C:\\Users\\Stan\\.platformio\\penv\\Scripts\\platformio.exe": true
     }
 }

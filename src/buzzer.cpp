@@ -2,20 +2,20 @@
 #include "hardware/buzzer.h"
 
 static uint8_t s_buzzerPin = 255;
+static const uint8_t kBuzzerDutyPercent = 18;
 
-static uint16_t computeOcr1a(uint16_t frequencyHz, uint16_t prescaler) {
+static uint16_t computeTop(uint16_t frequencyHz, uint16_t prescaler) {
   if (frequencyHz == 0 || prescaler == 0) return 0xFFFF;
 
-  // Timer1 CTC toggle: f = F_CPU / (2 * prescaler * (1 + OCR1A))
+  // Timer1 phase/frequency-correct PWM: f = F_CPU / (2 * prescaler * TOP)
   uint32_t denom = 2UL * (uint32_t)prescaler * (uint32_t)frequencyHz;
   if (denom == 0) return 0xFFFF;
 
-  uint32_t rounded = (F_CPU + (denom / 2UL)) / denom;
-  if (rounded == 0) rounded = 1;
+  uint32_t top = (F_CPU + (denom / 2UL)) / denom;
+  if (top < 2UL) top = 2UL;
 
-  uint32_t ocr = rounded - 1UL;
-  if (ocr > 0xFFFFUL) return 0xFFFF;
-  return (uint16_t)ocr;
+  if (top > 0xFFFFUL) return 0xFFFF;
+  return (uint16_t)top;
 }
 
 void buzzerInit(uint8_t pin) {
@@ -32,33 +32,38 @@ void buzzerStart(uint16_t frequencyHz) {
   }
 
   uint8_t csBits = 0;
-  uint16_t ocr = computeOcr1a(frequencyHz, 1);
+  uint16_t top = computeTop(frequencyHz, 1);
 
-  if (ocr <= 0xFFFF) {
+  if (top <= 0xFFFF) {
     csBits = _BV(CS10);
   }
-  if (ocr > 0xFFFF - 1) {
-    ocr = computeOcr1a(frequencyHz, 8);
+  if (top > 0xFFFF - 1) {
+    top = computeTop(frequencyHz, 8);
     csBits = _BV(CS11);
   }
-  if (ocr > 0xFFFF - 1) {
-    ocr = computeOcr1a(frequencyHz, 64);
+  if (top > 0xFFFF - 1) {
+    top = computeTop(frequencyHz, 64);
     csBits = _BV(CS11) | _BV(CS10);
   }
-  if (ocr > 0xFFFF - 1) {
-    ocr = computeOcr1a(frequencyHz, 256);
+  if (top > 0xFFFF - 1) {
+    top = computeTop(frequencyHz, 256);
     csBits = _BV(CS12);
   }
-  if (ocr > 0xFFFF - 1) {
-    ocr = computeOcr1a(frequencyHz, 1024);
+  if (top > 0xFFFF - 1) {
+    top = computeTop(frequencyHz, 1024);
     csBits = _BV(CS12) | _BV(CS10);
   }
 
+  uint32_t compare = ((uint32_t)top * (uint32_t)kBuzzerDutyPercent) / 100UL;
+  if (compare < 1UL) compare = 1UL;
+  if (compare >= top) compare = (uint32_t)top - 1UL;
+
   noInterrupts();
-  // CTC mode with OCR1A top, toggle OC1A on compare match.
-  TCCR1A = _BV(COM1A0);
-  TCCR1B = _BV(WGM12) | csBits;
-  OCR1A = ocr;
+  // Phase/frequency-correct PWM (mode 8), TOP=ICR1, output on OC1A.
+  TCCR1A = _BV(COM1A1);
+  TCCR1B = _BV(WGM13) | csBits;
+  ICR1 = top;
+  OCR1A = (uint16_t)compare;
   interrupts();
 }
 

@@ -374,7 +374,7 @@ void displayModeUTCLocal() {
 static bool s_tsScrollActive = false;
 static bool s_tsConfirmDeleteAll = false;
 static uint8_t s_tsSelectedNewest = 0;  // 0 = newest
-static bool s_tsShowLocal = false;      // false=UTC, true=Local
+static bool s_tsShowLocal = true;       // false=UTC, true=Local
 static uint32_t s_tsDeleteAnimUntil = 0;
 static const uint16_t kTsScrollBlinkMs = 300;
 static const uint16_t kTsDeleteCueMs = 700;
