@@ -77,6 +77,10 @@ TimeEdit_t mcuTimeGetCurrent() {
   return current;
 }
 
+bool mcuTimeHasSync() {
+  return g_mcuHasSync;
+}
+
 // ===== Save Manual Time =====
 void setManualTime(TimeEdit_t* timeData) {
   if (timeData) {

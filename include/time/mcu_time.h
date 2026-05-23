@@ -47,6 +47,7 @@ bool time_shouldSkipGPSSync(void);
 // ===== Legacy API (current firmware usage) =====
 void mcuTimeSync(TimeEdit_t* timeData);
 TimeEdit_t mcuTimeGetCurrent(void);
+bool mcuTimeHasSync(void);
 bool shouldSkipGPSSync(void);
 void mcuTimeAddElapsedSeconds(uint32_t seconds);
 

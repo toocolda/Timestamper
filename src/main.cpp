@@ -37,6 +37,9 @@ enum GpsSyncState : uint8_t {
 static bool s_gpsPowerOn = false;
 static GpsSyncState s_gpsSyncState = GPS_SYNC_IDLE;
 static uint32_t s_gpsSyncStartedMs = 0;
+static uint32_t s_gpsSyncStartFixSentences = 0;
+static GpsSyncResult s_gpsSyncLastResult = GPS_SYNC_RESULT_NONE;
+static uint32_t s_gpsSyncLastResultMs = 0;
 static const uint32_t kGpsSyncTimeoutMs = 120000;
 
 static uint8_t s_gpsCfgAttempts = 0;
@@ -57,6 +60,7 @@ static void gpsSetPower(bool on) {
 void gpsSyncRequest(void) {
   s_gpsSyncState = GPS_SYNC_SEARCHING;
   s_gpsSyncStartedMs = crystalTimeGetMillis();
+  s_gpsSyncStartFixSentences = gps.sentencesWithFix();
   gpsSetPower(true);
   g_modeEpoch++;
 }
@@ -78,10 +82,26 @@ uint16_t gpsSyncGetElapsedSeconds(void) {
   return (uint16_t)(elapsed / 1000UL);
 }
 
+GpsSyncResult gpsSyncGetLastResult(void) {
+  return s_gpsSyncLastResult;
+}
+
+uint16_t gpsSyncGetLastResultAgeSeconds(void) {
+  if (s_gpsSyncLastResult == GPS_SYNC_RESULT_NONE) return 0;
+  uint32_t ageMs = crystalTimeGetMillis() - s_gpsSyncLastResultMs;
+  uint32_t ageSec = ageMs / 1000UL;
+  if (ageSec > 999U) ageSec = 999U;
+  return (uint16_t)ageSec;
+}
+
 static void gpsSyncUpdate(void) {
   if (s_gpsSyncState != GPS_SYNC_SEARCHING) return;
 
-  if (isGPSTimeReliable()) {
+  // Only accept GPS time after at least one fresh fix sentence arrives
+  // in this sync session (prevents immediate reuse of stale parser data).
+  bool hasFreshFixThisSession = gps.sentencesWithFix() > s_gpsSyncStartFixSentences;
+
+  if (hasFreshFixThisSession && isGPSTimeReliable()) {
     TimeEdit_t gpsTime;
     gpsTime.year = gps.date.year();
     gpsTime.month = gps.date.month();
@@ -91,12 +111,16 @@ static void gpsSyncUpdate(void) {
     gpsTime.second = gps.time.second();
     mcuTimeSync(&gpsTime);
 
+    s_gpsSyncLastResult = GPS_SYNC_RESULT_OK;
+    s_gpsSyncLastResultMs = crystalTimeGetMillis();
     s_gpsSyncState = GPS_SYNC_IDLE;
     g_modeEpoch++;
     return;
   }
 
   if (crystalTimeElapsedMs(s_gpsSyncStartedMs, kGpsSyncTimeoutMs)) {
+    s_gpsSyncLastResult = GPS_SYNC_RESULT_TIMEOUT;
+    s_gpsSyncLastResultMs = crystalTimeGetMillis();
     s_gpsSyncState = GPS_SYNC_IDLE;
     g_modeEpoch++;
   }

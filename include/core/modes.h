@@ -32,11 +32,19 @@ void updateDisplay(uint8_t mode);
 void handleModeEvent(uint8_t mode, ButtonEvent_t event);
 
 // ===== GPS Sync Coordination =====
+enum GpsSyncResult : uint8_t {
+	GPS_SYNC_RESULT_NONE = 0,
+	GPS_SYNC_RESULT_OK,
+	GPS_SYNC_RESULT_TIMEOUT
+};
+
 bool isGPSTimeReliable(void);
 void gpsSyncRequest(void);
 bool gpsSyncIsSearching(void);
 uint16_t gpsSyncGetRemainingSeconds(void);
 uint16_t gpsSyncGetElapsedSeconds(void);
+GpsSyncResult gpsSyncGetLastResult(void);
+uint16_t gpsSyncGetLastResultAgeSeconds(void);
 
 // ===== Mode State =====
 extern uint8_t g_currentMode;

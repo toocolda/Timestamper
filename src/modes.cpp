@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <TinyGPS++.h>
+#include <avr/pgmspace.h>
 
 #include "hardware/backlight.h"
 #include "hardware/battery.h"
@@ -97,38 +98,45 @@ bool isGPSTimeReliable() {
   if (!gps.time.isValid() || !gps.date.isValid()) {
     return false;
   }
-  
+
+  // Require at least one satellite in use so backup-RTC time (reported with 0
+  // sats while no signal) is never mistaken for satellite-sourced time.
+  if (gps.satellites.value() < 1) {
+    return false;
+  }
+
   int year = gps.date.year();
   int month = gps.date.month();
   int day = gps.date.day();
-  
-  // Sanity check: year should be reasonable (>= 2020)
+
   if (year < 2020) return false;
-  
-  // Month should be 1-12
   if (month < 1 || month > 12) return false;
-  
-  // Day should be 1-31
   if (day < 1 || day > 31) return false;
-  
+
   return true;
 }
 
 // ===== Mode: UTC Only =====
 void displayModeUTCOnly() {
   static int lastSec = -1;
-  static int lastSat = -1;
   static bool lastTimeValid = false;
   static uint32_t lastEpoch = 0;
   static bool lastEditMode = false;
+  static uint16_t lastSyncElapsed = 0xFFFFU;
+  static bool lastSyncSearching = false;
+  static GpsSyncResult lastSyncResult = GPS_SYNC_RESULT_NONE;
+  static uint16_t lastSyncAge = 0xFFFFU;
   
   // Reset cache if mode changed
   if (lastEpoch != g_modeEpoch) {
     lastSec = -1;
-    lastSat = -1;
     lastTimeValid = false;
     lastEpoch = g_modeEpoch;
     lastEditMode = false;
+    lastSyncElapsed = 0xFFFFU;
+    lastSyncSearching = false;
+    lastSyncResult = GPS_SYNC_RESULT_NONE;
+    lastSyncAge = 0xFFFFU;
     lcd.clear();
   }
   
@@ -141,8 +149,11 @@ void displayModeUTCOnly() {
     if (!editMode) {
       // Just exited edit mode - reset display cache to force redraw
       lastSec = -1;
-      lastSat = -1;
       lastTimeValid = false;
+      lastSyncElapsed = 0xFFFFU;
+      lastSyncSearching = false;
+      lastSyncResult = GPS_SYNC_RESULT_NONE;
+      lastSyncAge = 0xFFFFU;
     }
   }
   
@@ -217,33 +228,32 @@ void displayModeUTCOnly() {
     
     // Show GPS status on line 2 as hint (blinking field is visual hint)
     lcd.setCursor(0, 1);
-    int sat = gps.satellites.value();
-    bool timeReliable = isGPSTimeReliable();
-    char gpsStatus[3];
-    buildGpsStatus(gpsStatus, timeReliable, sat);
     uint8_t batPercent = batteryGetPercentage();
-    snprintf(buf, LCD_BUF_SIZE, "GPS:%s SAT:%02d BAT:%02d", gpsStatus, sat, batPercent);
+    snprintf(buf, LCD_BUF_SIZE, "EDIT UTC BAT:%02d      ", batPercent);
     lcd.print(buf);
     
   } else {
     // ===== NORMAL DISPLAY - Uses MCU time (ticks independently) =====
     bool timeValid = isGPSTimeReliable();
-    int sat = gps.satellites.value();
+    bool utcDisplayValid = mcuTimeHasSync() || hasManualTime();
+    bool syncSearching = gpsSyncIsSearching();
+    uint16_t syncElapsed = syncSearching ? gpsSyncGetElapsedSeconds() : 0U;
+    GpsSyncResult syncResult = gpsSyncGetLastResult();
+    uint16_t syncAge = gpsSyncGetLastResultAgeSeconds();
 
     // Get current time from MCU (ticks based on elapsed ms)
     TimeEdit_t currentTime = mcuTimeGetCurrent();
     int h = currentTime.hour;
     int m = currentTime.minute;
     int s = currentTime.second;
-    
-    char gpsStatus[3];
-    buildGpsStatus(gpsStatus, timeValid, sat);
-    
-    if (s != lastSec || sat != lastSat || timeValid != lastTimeValid) {
+
+    if (s != lastSec || timeValid != lastTimeValid ||
+      syncSearching != lastSyncSearching || syncElapsed != lastSyncElapsed ||
+      syncResult != lastSyncResult || syncAge != lastSyncAge) {
       lcd.setCursor(0, 0);
       
       char buf[LCD_BUF_SIZE];
-      if (timeValid || hasManualTime()) {
+      if (utcDisplayValid) {
         // Display with MCU time (which keeps ticking)
         snprintf(buf, LCD_BUF_SIZE,
                  "%04d-%02d-%02d %02d:%02d:%02dZ",
@@ -257,23 +267,29 @@ void displayModeUTCOnly() {
       
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
-      if (gpsSyncIsSearching()) {
+      uint8_t batPercent = batteryGetPercentage();
+      if (syncSearching) {
         uint16_t remain = gpsSyncGetRemainingSeconds();
-        uint16_t elapsed = gpsSyncGetElapsedSeconds();
-        snprintf(buf2, LCD_BUF_SIZE,
-                 "SYNC %03us SAT:%02d %03u",
-                 (unsigned int)elapsed, sat, (unsigned int)remain);
+        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC SRCH %03u BAT:%02u"),
+                   (unsigned int)remain, (unsigned int)batPercent);
+      } else if (syncResult == GPS_SYNC_RESULT_OK) {
+        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC OK  %03us BAT:%02u"),
+                   (unsigned int)syncAge, (unsigned int)batPercent);
+      } else if (syncResult == GPS_SYNC_RESULT_TIMEOUT) {
+        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC TMO TRY  BAT:%02u"),
+                   (unsigned int)batPercent);
       } else {
-        uint8_t batPercent = batteryGetPercentage();
-        snprintf(buf2, LCD_BUF_SIZE,
-                 "GPS:%s SAT:%02d BAT:%02d",
-                 gpsStatus, sat, batPercent);
+        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("              BAT:%02u"),
+                   (unsigned int)batPercent);
       }
       lcd.print(buf2);
       
       lastSec = s;
-      lastSat = sat;
       lastTimeValid = timeValid;
+      lastSyncSearching = syncSearching;
+      lastSyncElapsed = syncElapsed;
+      lastSyncResult = syncResult;
+      lastSyncAge = syncAge;
     }
   }
 }
@@ -750,6 +766,12 @@ void displayModeGpsInfo() {
 
   bool gsValid = gps.speed.isValid();
   bool hdgValid = gps.course.isValid();
+  bool timeReliable = isGPSTimeReliable();
+  int sat = gps.satellites.value();
+  if (sat < 0) sat = 0;
+  if (sat > 99) sat = 99;
+  char gpsStatus[3];
+  buildGpsStatus(gpsStatus, timeReliable, sat);
   int16_t altFeet = 0;
   bool altValid = gpsTryGetAltitudeFeet(&altFeet);
 
@@ -775,6 +797,9 @@ void displayModeGpsInfo() {
   sig |= (uint32_t)gsValid;
   sig |= (uint32_t)hdgValid << 1;
   sig |= (uint32_t)altValid << 2;
+  sig ^= (uint32_t)(sat & 0x7F) << 6;
+  sig ^= (uint32_t)((uint8_t)gpsStatus[0]) << 13;
+  sig ^= (uint32_t)((uint8_t)gpsStatus[1]) << 21;
   sig ^= (uint32_t)gsTenths << 3;
   sig ^= (uint32_t)headingDeg << 14;
   sig ^= (uint32_t)((uint16_t)altFeet) << 23;
@@ -786,7 +811,7 @@ void displayModeGpsInfo() {
 
   char gsStr[7] = "  --.-";
   char hdgStr[4] = "---";
-  char altStr[8] = "   ----";
+  char altStr[6] = "-----";
 
   if (gsValid) {
     snprintf(gsStr, sizeof(gsStr), "%6.1f", gps.speed.knots());
@@ -795,7 +820,7 @@ void displayModeGpsInfo() {
     snprintf(hdgStr, sizeof(hdgStr), "%03u", (unsigned int)headingDeg);
   }
   if (altValid) {
-    snprintf(altStr, sizeof(altStr), "%7d", (int)altFeet);
+    snprintf(altStr, sizeof(altStr), "%5d", (int)altFeet);
   }
 
   lcd.setCursor(0, 0);
@@ -805,7 +830,7 @@ void displayModeGpsInfo() {
 
   lcd.setCursor(0, 1);
   char line2[LCD_BUF_SIZE];
-  snprintf(line2, LCD_BUF_SIZE, "ALT:%sFT       ", altStr);
+  snprintf(line2, LCD_BUF_SIZE, "ALT:%sFT %s%02d", altStr, gpsStatus, sat);
   lcd.print(line2);
 }
 
@@ -860,6 +885,7 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     return;
   }
 
+  // Global GPS sync request (right long) - works from any mode unless editing.
   // Any button acknowledges active timer alarms and consumes the event.
   if (event != BUTTON_NONE && timerAnyAlarmActive()) {
     timerAcknowledgeAllAlarms();
