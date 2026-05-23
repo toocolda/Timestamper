@@ -1,0 +1,6 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "pio": true,
+        "Get-Command": true
+    }
+}

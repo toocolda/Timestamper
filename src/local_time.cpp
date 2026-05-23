@@ -1,8 +1,38 @@
 #include <Arduino.h>
+#include <EEPROM.h>
 #include "time/local_time.h"
 
 // ===== UTC Offset Storage =====
 static int8_t g_utcOffset = 0;  // Default: UTC+00
+static bool g_utcOffsetLoaded = false;
+
+static const int kUtcOffsetSignatureAddr = E2END - 1;
+static const int kUtcOffsetValueAddr = E2END - 2;
+static const uint8_t kUtcOffsetSignature = 0xA5;
+
+static void loadUTCOffset() {
+  if (g_utcOffsetLoaded) return;
+
+  if (EEPROM.read(kUtcOffsetSignatureAddr) == kUtcOffsetSignature) {
+    uint8_t storedOffset = EEPROM.read(kUtcOffsetValueAddr);
+    if (storedOffset <= 26) {
+      g_utcOffset = (int8_t)storedOffset - 12;
+    } else {
+      g_utcOffset = 0;
+    }
+  } else {
+    g_utcOffset = 0;
+    EEPROM.update(kUtcOffsetValueAddr, (uint8_t)(g_utcOffset + 12));
+    EEPROM.update(kUtcOffsetSignatureAddr, kUtcOffsetSignature);
+  }
+
+  g_utcOffsetLoaded = true;
+}
+
+static void saveUTCOffset() {
+  EEPROM.update(kUtcOffsetValueAddr, (uint8_t)(g_utcOffset + 12));
+  EEPROM.update(kUtcOffsetSignatureAddr, kUtcOffsetSignature);
+}
 
 // ===== Offset Edit State =====
 static int8_t g_offsetEditValue = 0;           // Value being edited
@@ -14,13 +44,16 @@ static bool g_offsetShowFlash = true;
 
 // ===== Get Current UTC Offset =====
 int8_t getUTCOffset() {
+  loadUTCOffset();
   return g_utcOffset;
 }
 
 // ===== Set UTC Offset =====
 void setUTCOffset(int8_t offset) {
   if (offset >= -12 && offset <= 14) {
+    loadUTCOffset();
     g_utcOffset = offset;
+    saveUTCOffset();
   }
 }
 
