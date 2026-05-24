@@ -42,13 +42,52 @@ static bool gpsTryGetAltitudeFeet(int16_t* altFeetOut) {
   if (altFeetOut == nullptr) return false;
 
   if (gps.altitude.isValid()) {
-    double altFeet = gps.altitude.feet();
-    if (altFeet < -999.0) altFeet = -999.0;
-    if (altFeet > 32767.0) altFeet = 32767.0;
-    *altFeetOut = (int16_t)(altFeet + (altFeet >= 0.0 ? 0.5 : -0.5));
+    // TinyGPS++ altitude.value() is meters * 100.
+    int32_t altMetersX100 = gps.altitude.value();
+    // feet = meters * 3.2808399, expressed from meters*100 with integer rounding.
+    int64_t scaled = (int64_t)altMetersX100 * 328084LL;
+    scaled += (scaled >= 0) ? 5000000LL : -5000000LL;
+    int32_t altFeet = (int32_t)(scaled / 10000000LL);
+    if (altFeet < -999) altFeet = -999;
+    if (altFeet > 32767) altFeet = 32767;
+    *altFeetOut = (int16_t)altFeet;
     return true;
   }
   return false;
+}
+
+static bool parseDecimalTenths(const char* text, uint16_t* outX10) {
+  if (text == nullptr || outX10 == nullptr) return false;
+
+  uint16_t whole = 0;
+  uint8_t frac = 0;
+  bool seenDigit = false;
+  bool seenDot = false;
+  bool fracSet = false;
+
+  for (const char* p = text; *p != '\0'; ++p) {
+    char c = *p;
+    if (c >= '0' && c <= '9') {
+      seenDigit = true;
+      if (!seenDot) {
+        whole = (uint16_t)(whole * 10U + (uint16_t)(c - '0'));
+        if (whole > 999U) whole = 999U;
+      } else if (!fracSet) {
+        frac = (uint8_t)(c - '0');
+        fracSet = true;
+      }
+    } else if (c == '.' && !seenDot) {
+      seenDot = true;
+    } else {
+      break;
+    }
+  }
+
+  if (!seenDigit) return false;
+  uint16_t v = (uint16_t)(whole * 10U + (uint16_t)frac);
+  if (v > 999U) v = 999U;
+  *outX10 = v;
+  return true;
 }
 
 static bool gpsTryGetPdopX10(uint16_t* pdopX10Out) {
@@ -62,12 +101,7 @@ static bool gpsTryGetPdopX10(uint16_t* pdopX10Out) {
     rawPdop = s_bdgsaPdop.value();
   }
   if (rawPdop == nullptr) return false;
-
-  double pdop = atof(rawPdop);
-  if (pdop < 0.0) return false;
-  if (pdop > 99.9) pdop = 99.9;
-  *pdopX10Out = (uint16_t)(pdop * 10.0 + 0.5);
-  return true;
+  return parseDecimalTenths(rawPdop, pdopX10Out);
 }
 
 // ===== Global Mode Variables =====
@@ -102,9 +136,8 @@ static void buildGpsStatus(char out[3], bool timeReliable, int satCount, bool ha
     strcpy(out, "2D");
   } else if (satCount > 0) {
     strcpy(out, "AC");
-  } else if (!timeReliable) {
-    strcpy(out, "NO");
   } else {
+    (void)timeReliable;
     strcpy(out, "NO");
   }
 }
@@ -825,18 +858,16 @@ void displayModeGpsInfo() {
   uint16_t pdopX10 = 0;
 
   if (gsValid) {
-    double gsKnots = gps.speed.knots();
-    if (gsKnots < 0.0) gsKnots = 0.0;
-    if (gsKnots > 999.9) gsKnots = 999.9;
-    gsTenths = (uint16_t)(gsKnots * 10.0 + 0.5);
+    // TinyGPS++ speed.value() is knots * 100.
+    uint32_t gsCentiKnots = gps.speed.value();
+    if (gsCentiKnots > 9999U) gsCentiKnots = 9999U;
+    gsTenths = (uint16_t)((gsCentiKnots + 5U) / 10U);
   }
 
   if (hdgValid) {
-    double hdg = gps.course.deg();
-    while (hdg < 0.0) hdg += 360.0;
-    while (hdg >= 360.0) hdg -= 360.0;
-    headingDeg = (uint16_t)(hdg + 0.5);
-    if (headingDeg >= 360U) headingDeg = 0;
+    // TinyGPS++ course.value() is degrees * 100.
+    uint32_t courseCentiDeg = gps.course.value();
+    headingDeg = (uint16_t)(((courseCentiDeg + 50U) / 100U) % 360U);
   }
 
   pdopValid = gpsTryGetPdopX10(&pdopX10);
