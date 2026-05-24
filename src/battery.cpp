@@ -1,5 +1,6 @@
 #include "hardware/battery.h"
 #include <Arduino.h>
+#include "time/crystal_time.h"
 
 // ===== Battery Configuration =====
 // Voltage divider: 27K (positive) + 100K (to GND) = 127K total
@@ -19,7 +20,7 @@ void batteryInit(uint8_t adcPin) {
   s_batteryAdcPin = adcPin;
   pinMode(adcPin, INPUT);
   // Force immediate first read without waiting for the first period.
-  s_lastBatterySampleMs = millis() - kBatteryUpdatePeriodMs;
+  s_lastBatterySampleMs = crystalTimeGetMillis() - kBatteryUpdatePeriodMs;
   batteryUpdate();  // Initial read
 }
 
@@ -27,7 +28,7 @@ void batteryInit(uint8_t adcPin) {
 void batteryUpdate() {
   if (s_batteryAdcPin == 0) return;  // Not initialized
   
-  uint32_t now = millis();
+  uint32_t now = crystalTimeGetMillis();
   if (now - s_lastBatterySampleMs < kBatteryUpdatePeriodMs) {
     return;  // Not time to update yet
   }

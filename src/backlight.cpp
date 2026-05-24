@@ -1,6 +1,7 @@
 #include "hardware/backlight.h"
 #include <Arduino.h>
 #include "features/timer.h"
+#include "time/crystal_time.h"
 
 // ===== Backlight Configuration =====
 static const uint16_t kBacklightBlinkHalfPeriodMs = 200;   // 200ms on, 200ms off
@@ -39,7 +40,7 @@ void backlightInit(uint8_t bluePin, uint8_t redPin, uint8_t greenPin) {
 void backlightUpdate() {
   if (s_bluePin == 0 || s_redPin == 0 || s_greenPin == 0) return;  // Not initialized
 
-  uint32_t now = millis();
+  uint32_t now = crystalTimeGetMillis();
   bool alarmBlink = timerAnyAlarmActive();
   bool timestampBlink = (now < s_timestampBlinkUntilMs);
   
@@ -67,7 +68,7 @@ void backlightUpdate() {
 // ===== Trigger timestamp blink (call when timestamp is captured) =====
 void backlightTriggerTimestamp() {
   if (s_bluePin == 0 || s_redPin == 0 || s_greenPin == 0) return;  // Not initialized
-  uint32_t now = millis();
+  uint32_t now = crystalTimeGetMillis();
   s_timestampBlinkUntilMs = now + kTimestampBlinkDurationMs;
 }
 
@@ -78,12 +79,12 @@ void backlightToggle() {
     s_manualOn = false;
   } else {
     s_manualOn = true;
-    s_manualOnUntilMs = millis() + kManualAutoOffMs;
+    s_manualOnUntilMs = crystalTimeGetMillis() + kManualAutoOffMs;
   }
 }
 
 // ===== Query if backlight is currently active =====
 bool backlightIsActive() {
-  uint32_t now = millis();
+  uint32_t now = crystalTimeGetMillis();
   return (s_manualOn || timerAnyAlarmActive() || now < s_timestampBlinkUntilMs);
 }

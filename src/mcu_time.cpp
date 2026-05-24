@@ -11,7 +11,6 @@ static bool g_mcuHasSync = false;
 // ===== Manual Time Storage =====
 static TimeEdit_t g_manualTime = {2020, 1, 1, 12, 0, 0};
 static bool g_hasManualTime = false;
-static uint32_t g_manualTimeSetAt = 0;  // Crystal-ms timestamp when manual time was set
 
 // ===== Sync MCU Clock to Known Time =====
 void mcuTimeSync(TimeEdit_t* timeData) {
@@ -86,16 +85,8 @@ void setManualTime(TimeEdit_t* timeData) {
   if (timeData) {
     g_manualTime = *timeData;
     g_hasManualTime = true;
-    g_manualTimeSetAt = crystalTimeGetMillis();
     mcuTimeSync(timeData);  // Initialize MCU clock to start ticking immediately
   }
-}
-
-// ===== Check if GPS sync should be skipped (30s grace period after manual set) =====
-bool shouldSkipGPSSync() {
-  if (!g_hasManualTime) return false;
-  uint32_t elapsed = crystalTimeGetMillis() - g_manualTimeSetAt;
-  return elapsed < 30000;  // Skip GPS sync for 30 seconds after manual time set (give user time to verify)
 }
 
 // ===== Get Saved Manual Time =====
@@ -108,7 +99,3 @@ bool hasManualTime() {
   return g_hasManualTime;
 }
 
-void mcuTimeAddElapsedSeconds(uint32_t seconds) {
-  (void)seconds;
-  // Kept for API compatibility; no longer needed with crystal-driven core time.
-}

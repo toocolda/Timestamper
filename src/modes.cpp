@@ -130,6 +130,7 @@ static void buzzTimestampStamp() {
 // NO=no reliable GPS time/date, 3D=3D-quality fix, 2D=position fix,
 // AC=acquiring (satellites present but no position fix yet).
 static void buildGpsStatus(char out[3], bool timeReliable, int satCount, bool has3d) {
+  (void)timeReliable;
   if (has3d) {
     strcpy(out, "3D");
   } else if (gps.location.isValid()) {
@@ -137,7 +138,6 @@ static void buildGpsStatus(char out[3], bool timeReliable, int satCount, bool ha
   } else if (satCount > 0) {
     strcpy(out, "AC");
   } else {
-    (void)timeReliable;
     strcpy(out, "NO");
   }
 }
