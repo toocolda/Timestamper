@@ -153,10 +153,10 @@ static void gpsSendCommand(const char* command) {
 
 static void gpsConfigureOutput() {
 #if GPS_UART_ENABLED
-  // Keep the sentences the watch actually uses:
-  // GGA (fix, sats, altitude) and RMC (time/date, speed, course).
-  // Drop GLL/GSA/GSV/VTG/ZDA/TXT to reduce UART load at 9600 baud.
-  gpsSendCommand("$PCAS03,1,0,0,0,1,0,0,0*02");
+  // Keep only the sentences used by the watch:
+  // GGA (altitude, satellites), GSA (PDOP), and RMC (speed, course, UTC date/time).
+  // Drop GLL/GSV/VTG/ZDA/TXT to reduce UART load at 9600 baud.
+  gpsSendCommand("$PCAS03,1,0,1,0,1,0,0,0*03");
 #endif
 }
 

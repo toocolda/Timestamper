@@ -26,8 +26,17 @@
 extern ST7036 lcd;
 extern TinyGPSPlus gps;
 
-static TinyGPSCustom s_gnggaAltitude(gps, "GNGGA", 9);
-static TinyGPSCustom s_gpggaAltitude(gps, "GPGGA", 9);
+// In GSA, PDOP is field 15 (mode1, mode2, 12 PRN slots, then PDOP).
+static TinyGPSCustom s_gpgsaPdop;
+static TinyGPSCustom s_bdgsaPdop;
+static bool s_gpsCustomInited = false;
+
+static void ensureGpsCustomParsersInit() {
+  if (s_gpsCustomInited) return;
+  s_gpgsaPdop.begin(gps, "GPGSA", 15);
+  s_bdgsaPdop.begin(gps, "BDGSA", 15);
+  s_gpsCustomInited = true;
+}
 
 static bool gpsTryGetAltitudeFeet(int16_t* altFeetOut) {
   if (altFeetOut == nullptr) return false;
@@ -39,21 +48,25 @@ static bool gpsTryGetAltitudeFeet(int16_t* altFeetOut) {
     *altFeetOut = (int16_t)(altFeet + (altFeet >= 0.0 ? 0.5 : -0.5));
     return true;
   }
+  return false;
+}
 
-  const char* rawAlt = nullptr;
-  if (s_gnggaAltitude.isValid() && s_gnggaAltitude.value()[0] != '\0') {
-    rawAlt = s_gnggaAltitude.value();
-  } else if (s_gpggaAltitude.isValid() && s_gpggaAltitude.value()[0] != '\0') {
-    rawAlt = s_gpggaAltitude.value();
+static bool gpsTryGetPdopX10(uint16_t* pdopX10Out) {
+  if (pdopX10Out == nullptr) return false;
+  ensureGpsCustomParsersInit();
+
+  const char* rawPdop = nullptr;
+  if (s_gpgsaPdop.isValid() && s_gpgsaPdop.value()[0] != '\0') {
+    rawPdop = s_gpgsaPdop.value();
+  } else if (s_bdgsaPdop.isValid() && s_bdgsaPdop.value()[0] != '\0') {
+    rawPdop = s_bdgsaPdop.value();
   }
+  if (rawPdop == nullptr) return false;
 
-  if (rawAlt == nullptr) return false;
-
-  double altMeters = atof(rawAlt);
-  double altFeet = altMeters * 3.280839895;
-  if (altFeet < -999.0) altFeet = -999.0;
-  if (altFeet > 32767.0) altFeet = 32767.0;
-  *altFeetOut = (int16_t)(altFeet + (altFeet >= 0.0 ? 0.5 : -0.5));
+  double pdop = atof(rawPdop);
+  if (pdop < 0.0) return false;
+  if (pdop > 99.9) pdop = 99.9;
+  *pdopX10Out = (uint16_t)(pdop * 10.0 + 0.5);
   return true;
 }
 
@@ -80,17 +93,47 @@ static void buzzTimestampStamp() {
 }
 
 // Build compact GPS status token used in the status line:
-// NO=no reliable date/time, FX=3D fix, AC=acquiring, TI=time-only input/no sats.
-static void buildGpsStatus(char out[3], bool timeReliable, int satCount) {
-  if (!timeReliable) {
-    strcpy(out, "NO");
+// NO=no reliable GPS time/date, 3D=3D-quality fix, 2D=position fix,
+// AC=acquiring (satellites present but no position fix yet).
+static void buildGpsStatus(char out[3], bool timeReliable, int satCount, bool has3d) {
+  if (has3d) {
+    strcpy(out, "3D");
   } else if (gps.location.isValid()) {
-    strcpy(out, "FX");
+    strcpy(out, "2D");
   } else if (satCount > 0) {
     strcpy(out, "AC");
+  } else if (!timeReliable) {
+    strcpy(out, "NO");
   } else {
-    strcpy(out, "TI");
+    strcpy(out, "NO");
   }
+}
+
+// Convert true heading degrees to a fixed-width 3-char cardinal token.
+// Examples: 030 -> NNE, 270 -> W  , 359 -> N  .
+static void headingDegToCardinal3(uint16_t headingDeg, char out[4]) {
+  uint8_t idx = (uint8_t)(((uint32_t)headingDeg * 10UL + 112UL) / 225UL);
+  idx &= 0x0F;
+
+  switch (idx) {
+    case 0:  out[0] = 'N'; out[1] = ' '; out[2] = ' '; break;
+    case 1:  out[0] = 'N'; out[1] = 'N'; out[2] = 'E'; break;
+    case 2:  out[0] = 'N'; out[1] = 'E'; out[2] = ' '; break;
+    case 3:  out[0] = 'E'; out[1] = 'N'; out[2] = 'E'; break;
+    case 4:  out[0] = 'E'; out[1] = ' '; out[2] = ' '; break;
+    case 5:  out[0] = 'E'; out[1] = 'S'; out[2] = 'E'; break;
+    case 6:  out[0] = 'S'; out[1] = 'E'; out[2] = ' '; break;
+    case 7:  out[0] = 'S'; out[1] = 'S'; out[2] = 'E'; break;
+    case 8:  out[0] = 'S'; out[1] = ' '; out[2] = ' '; break;
+    case 9:  out[0] = 'S'; out[1] = 'S'; out[2] = 'W'; break;
+    case 10: out[0] = 'S'; out[1] = 'W'; out[2] = ' '; break;
+    case 11: out[0] = 'W'; out[1] = 'S'; out[2] = 'W'; break;
+    case 12: out[0] = 'W'; out[1] = ' '; out[2] = ' '; break;
+    case 13: out[0] = 'W'; out[1] = 'N'; out[2] = 'W'; break;
+    case 14: out[0] = 'N'; out[1] = 'W'; out[2] = ' '; break;
+    default: out[0] = 'N'; out[1] = 'N'; out[2] = 'W'; break;
+  }
+  out[3] = '\0';
 }
 
 // ===== GPS Validation Helper =====
@@ -771,12 +814,15 @@ void displayModeGpsInfo() {
   if (sat < 0) sat = 0;
   if (sat > 99) sat = 99;
   char gpsStatus[3];
-  buildGpsStatus(gpsStatus, timeReliable, sat);
   int16_t altFeet = 0;
   bool altValid = gpsTryGetAltitudeFeet(&altFeet);
+  bool has3d = altValid && gps.location.isValid() && (sat >= 4);
+  buildGpsStatus(gpsStatus, timeReliable, sat, has3d);
 
   uint16_t gsTenths = 0;
   uint16_t headingDeg = 0;
+  bool pdopValid = false;
+  uint16_t pdopX10 = 0;
 
   if (gsValid) {
     double gsKnots = gps.speed.knots();
@@ -793,6 +839,8 @@ void displayModeGpsInfo() {
     if (headingDeg >= 360U) headingDeg = 0;
   }
 
+  pdopValid = gpsTryGetPdopX10(&pdopX10);
+
   uint32_t sig = 0;
   sig |= (uint32_t)gsValid;
   sig |= (uint32_t)hdgValid << 1;
@@ -803,34 +851,46 @@ void displayModeGpsInfo() {
   sig ^= (uint32_t)gsTenths << 3;
   sig ^= (uint32_t)headingDeg << 14;
   sig ^= (uint32_t)((uint16_t)altFeet) << 23;
+  sig ^= (uint32_t)pdopValid << 5;
+  sig ^= (uint32_t)pdopX10 << 9;
 
   if (sig == lastSig) {
     return;
   }
   lastSig = sig;
 
-  char gsStr[7] = "  --.-";
+  char gsStr[4] = "---";
   char hdgStr[4] = "---";
+  char hdgCard[4] = "---";
   char altStr[6] = "-----";
+  char gpsFixSat[5] = "NO--";
+  char pdopTok[4] = "P--";
 
   if (gsValid) {
-    snprintf(gsStr, sizeof(gsStr), "%6.1f", gps.speed.knots());
+    uint16_t whole = (uint16_t)(gsTenths / 10U);
+    snprintf_P(gsStr, sizeof(gsStr), PSTR("%03u"), (unsigned int)whole);
   }
   if (hdgValid) {
-    snprintf(hdgStr, sizeof(hdgStr), "%03u", (unsigned int)headingDeg);
+    snprintf_P(hdgStr, sizeof(hdgStr), PSTR("%03u"), (unsigned int)headingDeg);
+    headingDegToCardinal3(headingDeg, hdgCard);
   }
   if (altValid) {
-    snprintf(altStr, sizeof(altStr), "%5d", (int)altFeet);
+    snprintf_P(altStr, sizeof(altStr), PSTR("%5d"), (int)altFeet);
+  }
+  snprintf_P(gpsFixSat, sizeof(gpsFixSat), PSTR("%s%02d"), gpsStatus, sat);
+  if (pdopValid) {
+    if (pdopX10 > 99U) pdopX10 = 99U;
+    snprintf_P(pdopTok, sizeof(pdopTok), PSTR("P%02u"), (unsigned int)pdopX10);
   }
 
   lcd.setCursor(0, 0);
   char line1[LCD_BUF_SIZE];
-  snprintf(line1, LCD_BUF_SIZE, "GS:%sKT HDG:%s ", gsStr, hdgStr);
+  snprintf_P(line1, LCD_BUF_SIZE, PSTR("ALT:%sFT GS:%sKT"), altStr, gsStr);
   lcd.print(line1);
 
   lcd.setCursor(0, 1);
   char line2[LCD_BUF_SIZE];
-  snprintf(line2, LCD_BUF_SIZE, "ALT:%sFT %s%02d", altStr, gpsStatus, sat);
+  snprintf_P(line2, LCD_BUF_SIZE, PSTR("HDG:%s %s %s %s"), hdgStr, hdgCard, gpsFixSat, pdopTok);
   lcd.print(line2);
 }
 
