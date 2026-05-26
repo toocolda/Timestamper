@@ -7,8 +7,8 @@
 static const uint16_t kTimestampBlinkHalfPeriodMs = 200;   // 200ms on, 200ms off
 static const uint16_t kTimestampBlinkDurationMs   = 2000;  // 2s confirmation blink
 static const uint32_t kManualAutoOffMs            = 30000; // 30s manual auto-off
-static const uint8_t  kBluePwmLevels              = 4;      // Software PWM levels (0..4)
-static const uint16_t kBlueFadeStepMs             = 16;     // ~160ms full fade
+static const uint8_t  kBluePwmLevels              = 3;      // Software PWM levels (0..3)
+static const uint16_t kBlueFadeStepMs             = 20;     // ~60ms full fade
 
 enum BacklightColor : uint8_t {
   BL_COLOR_NONE = 0,
