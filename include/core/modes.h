@@ -41,6 +41,7 @@ enum GpsSyncResult : uint8_t {
 bool isGPSTimeReliable(void);
 void gpsSyncRequest(void);
 bool gpsSyncIsSearching(void);
+bool gpsHasFreshFixSincePowerOn(void);
 uint16_t gpsSyncGetRemainingSeconds(void);
 uint16_t gpsSyncGetElapsedSeconds(void);
 GpsSyncResult gpsSyncGetLastResult(void);

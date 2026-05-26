@@ -844,6 +844,7 @@ void displayModeGpsInfo() {
   bool gsValid = gps.speed.isValid();
   bool hdgValid = gps.course.isValid();
   bool timeReliable = isGPSTimeReliable();
+  bool hasFreshFix = gpsHasFreshFixSincePowerOn();
   int sat = gps.satellites.value();
   if (sat < 0) sat = 0;
   if (sat > 99) sat = 99;
@@ -857,6 +858,15 @@ void displayModeGpsInfo() {
   uint16_t headingDeg = 0;
   bool pdopValid = false;
   uint16_t pdopX10 = 0;
+
+  // Hide stale parser values until a fresh fix is received after power-on.
+  if (!hasFreshFix) {
+    gsValid = false;
+    hdgValid = false;
+    altValid = false;
+    pdopValid = false;
+    sat = 0;
+  }
 
   if (gsValid) {
     // TinyGPS++ speed.value() is knots * 100.
@@ -909,7 +919,15 @@ void displayModeGpsInfo() {
   if (altValid) {
     snprintf_P(altStr, sizeof(altStr), PSTR("%5d"), (int)altFeet);
   }
-  snprintf_P(gpsFixSat, sizeof(gpsFixSat), PSTR("%s%02d"), gpsStatus, sat);
+  if (hasFreshFix) {
+    snprintf_P(gpsFixSat, sizeof(gpsFixSat), PSTR("%s%02d"), gpsStatus, sat);
+  } else {
+    gpsFixSat[0] = '-';
+    gpsFixSat[1] = '-';
+    gpsFixSat[2] = '-';
+    gpsFixSat[3] = '-';
+    gpsFixSat[4] = '\0';
+  }
   if (pdopValid) {
     if (pdopX10 > 99U) pdopX10 = 99U;
     snprintf_P(pdopTok, sizeof(pdopTok), PSTR("P%02u"), (unsigned int)pdopX10);

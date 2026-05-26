@@ -35,12 +35,15 @@ enum GpsSyncState : uint8_t {
 };
 
 static bool s_gpsPowerOn = false;
+static uint32_t s_gpsPowerOnStartFixSentences = 0;
+static uint32_t s_gpsInfoPowerHoldUntilMs = 0;
 static GpsSyncState s_gpsSyncState = GPS_SYNC_IDLE;
 static uint32_t s_gpsSyncStartedMs = 0;
 static uint32_t s_gpsSyncStartFixSentences = 0;
 static GpsSyncResult s_gpsSyncLastResult = GPS_SYNC_RESULT_NONE;
 static uint32_t s_gpsSyncLastResultMs = 0;
 static const uint32_t kGpsSyncTimeoutMs = 120000;
+static const uint32_t kGpsInfoPowerHoldMs = 30000;
 
 #if GPS_PPS_DISCIPLINE_ENABLED
 static bool s_syncAwaitingUpdatedTimeAfterPps = false;
@@ -81,11 +84,16 @@ static void gpsTimeAddOneSecond(TimeEdit_t* t) {
   if (++t->hour < 24) return;
   t->hour = 0;
 
-  bool isLeapYear = ((t->year % 4 == 0) && (t->year % 100 != 0)) || (t->year % 400 == 0);
-  uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  if (isLeapYear) daysInMonth[1] = 29;
-
-  if (++t->day <= daysInMonth[t->month - 1]) return;
+  uint8_t maxDay = 31;
+  if (t->month == 4 || t->month == 6 || t->month == 9 || t->month == 11) {
+    maxDay = 30;
+  } else if (t->month == 2) {
+    maxDay = 28;
+  }
+  if ((t->month == 2) && ((t->year % 4) == 0)) {
+    maxDay = 29;
+  }
+  if (++t->day <= maxDay) return;
   t->day = 1;
   if (++t->month <= 12) return;
   t->month = 1;
@@ -189,12 +197,19 @@ static void gpsInfoPpsDisciplineAndAutoSyncUpdate() {
   }
 
   if (s_gpsInfoAwaitingUpdatedTimeAfterPps) {
+    bool allowSyncByInterval = crystalTimeElapsedMs(s_lastGpsInfoSyncMs, GPS_INFO_AUTO_SYNC_MIN_MS);
+    bool allowImmediateSync = gpsSyncIsSearching() || !mcuTimeHasSync();
     if (
         gps.sentencesWithFix() > s_lastGpsInfoSyncFixSentences &&
-        crystalTimeElapsedMs(s_lastGpsInfoSyncMs, GPS_INFO_AUTO_SYNC_MIN_MS) &&
+        (allowSyncByInterval || allowImmediateSync) &&
         gpsTryCommitFromPpsUpdatedSample()) {
+      uint32_t nowMs = crystalTimeGetMillis();
       s_lastGpsInfoSyncFixSentences = gps.sentencesWithFix();
-      s_lastGpsInfoSyncMs = crystalTimeGetMillis();
+      s_lastGpsInfoSyncMs = nowMs;
+      s_gpsSyncLastResult = GPS_SYNC_RESULT_OK;
+      s_gpsSyncLastResultMs = nowMs;
+      s_gpsSyncState = GPS_SYNC_IDLE;
+      g_modeEpoch++;
       s_gpsInfoAwaitingUpdatedTimeAfterPps = false;
       s_gpsInfoPpsArmedMs = 0;
     } else if (crystalTimeElapsedMs(s_gpsInfoPpsArmedMs, kSyncPpsUpdatedWaitMs)) {
@@ -212,6 +227,9 @@ static void gpsSetPower(bool on) {
   if (on == s_gpsPowerOn) return;
 
   s_gpsPowerOn = on;
+  if (on) {
+    s_gpsPowerOnStartFixSentences = gps.sentencesWithFix();
+  }
   digitalWrite(PIN_GPS_POWER, on ? LOW : HIGH);
   digitalWrite(PIN_GPS_ENABLE, on ? HIGH : LOW);
 
@@ -234,6 +252,10 @@ void gpsSyncRequest(void) {
 
 bool gpsSyncIsSearching(void) {
   return s_gpsSyncState == GPS_SYNC_SEARCHING;
+}
+
+bool gpsHasFreshFixSincePowerOn(void) {
+  return s_gpsPowerOn && (gps.sentencesWithFix() > s_gpsPowerOnStartFixSentences);
 }
 
 uint16_t gpsSyncGetRemainingSeconds(void) {
@@ -297,6 +319,18 @@ static void gpsSyncUpdate(void) {
       s_syncAwaitingUpdatedTimeAfterPps = false;
       s_syncPpsArmedMs = 0;
     }
+
+    if (crystalTimeElapsedMs(s_gpsSyncStartedMs, 5000UL) &&
+        gpsTryCommitFromPpsUpdatedSample()) {
+      s_syncAwaitingUpdatedTimeAfterPps = false;
+      s_syncPpsArmedMs = 0;
+
+      s_gpsSyncLastResult = GPS_SYNC_RESULT_OK;
+      s_gpsSyncLastResultMs = crystalTimeGetMillis();
+      s_gpsSyncState = GPS_SYNC_IDLE;
+      g_modeEpoch++;
+      return;
+    }
   }
 #else
   if (hasFreshFixThisSession && isGPSTimeReliable()) {
@@ -326,10 +360,20 @@ static void gpsSyncUpdate(void) {
 }
 
 static void gpsApplyPowerPolicy(void) {
+  uint32_t nowMs = crystalTimeGetMillis();
+
+  // Keep GPS alive briefly after leaving GPS Info mode so quick mode switches
+  // do not require a cold restart/reacquire each time.
+  if (g_currentMode == MODE_GPS_INFO) {
+    s_gpsInfoPowerHoldUntilMs = nowMs + kGpsInfoPowerHoldMs;
+  }
+  bool gpsInfoHoldActive = (int32_t)(nowMs - s_gpsInfoPowerHoldUntilMs) < 0;
+
   // Keep GPS off globally except:
   // 1) Active sync sessions (boot/manual), and
-  // 2) GPS Info mode.
-  bool shouldBeOn = gpsSyncIsSearching() || (g_currentMode == MODE_GPS_INFO);
+  // 2) GPS Info mode, and
+  // 3) 30s grace period after leaving GPS Info mode.
+  bool shouldBeOn = gpsSyncIsSearching() || (g_currentMode == MODE_GPS_INFO) || gpsInfoHoldActive;
   gpsSetPower(shouldBeOn);
 }
 
