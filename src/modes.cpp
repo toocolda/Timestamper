@@ -416,7 +416,7 @@ void displayModeUTCLocal() {
     // Line 1: UTC time (MM-DD HH:MM:SS UTC)
     lcd.setCursor(0, 0);
     char buf1[LCD_BUF_SIZE];
-    snprintf(buf1, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d UTC",
+    snprintf(buf1, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d UTC",
              utcTime.month, utcTime.day, utcTime.hour, utcTime.minute, utcTime.second);
     lcd.print(buf1);
     
@@ -429,7 +429,7 @@ void displayModeUTCLocal() {
     } else {
       strcpy(offsetStr, "   ");  // Blank during flash-off
     }
-    snprintf(buf2, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d %s",
+    snprintf(buf2, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d %s",
              localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offsetStr);
     lcd.print(buf2);
     
@@ -450,14 +450,14 @@ void displayModeUTCLocal() {
       // Line 1: UTC time (MM-DD HH:MM:SS UTC)
       lcd.setCursor(0, 0);
       char buf1[LCD_BUF_SIZE];
-      snprintf(buf1, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d UTC",
+      snprintf(buf1, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d UTC",
                utcTime.month, utcTime.day, utcTime.hour, utcTime.minute, utcTime.second);
       lcd.print(buf1);
       
       // Line 2: Local time (MM-DD HH:MM:SS +/-offset)
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
-      snprintf(buf2, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d %+03d",
+      snprintf(buf2, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d %+03d",
                localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offset);
       lcd.print(buf2);
     }
@@ -633,7 +633,7 @@ void displayModeStopwatch() {
 
     lcd.setCursor(0, 0);
     char line1[LCD_BUF_SIZE];
-    snprintf(line1, LCD_BUF_SIZE, "STOPWATCH       %s", running ? "RUN" : "STP");
+    snprintf(line1, LCD_BUF_SIZE, "STOPWATCH        %s", running ? "RUN" : "STP");
     lcd.print(line1);
 
     lcd.setCursor(0, 1);
@@ -684,7 +684,7 @@ void displayModeTimer() {
     lcd.setCursor(0, 0);
     char head[LCD_BUF_SIZE];
     const char* state = alarm ? "ALM" : (running ? "RUN" : "STP");
-    snprintf(head, LCD_BUF_SIZE, "FUEL TIMER      %s", state);
+    snprintf(head, LCD_BUF_SIZE, "FUEL TIMER       %s", state);
     lcd.print(head);
 
     if (editActive) {
