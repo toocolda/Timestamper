@@ -22,6 +22,10 @@ TimeEdit_t mcuTimeGetCurrent(void);
  */
 bool mcuTimeHasSync(void);
 
+// Set/get software clock drift correction in parts-per-million.
+void mcuTimeSetDriftPpm(int16_t ppm);
+int16_t mcuTimeGetDriftPpm(void);
+
 void setManualTime(TimeEdit_t* timeData);
 TimeEdit_t getManualTime(void);
 bool hasManualTime(void);

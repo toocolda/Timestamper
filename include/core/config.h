@@ -67,6 +67,14 @@
 #define GPS_BAUD 9600
 #define GPS_UART_ENABLED 1
 
+// ===== GPS PPS Discipline =====
+// Enable PPS-based crystal drift estimation while GPS is on (best in GPS Info mode).
+#define GPS_PPS_DISCIPLINE_ENABLED 1
+// Averaging window (in PPS intervals) for ppm estimate smoothing.
+#define GPS_PPS_DISCIPLINE_WINDOW 16
+// Minimum spacing between automatic time sync commits in GPS Info mode.
+#define GPS_INFO_AUTO_SYNC_MIN_MS 3000
+
 // ===== GPS Boot Control =====
 #define GPS_POWER_DEFAULT_ON 1
 #define GPS_ENABLE_DEFAULT_ON 1

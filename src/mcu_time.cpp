@@ -5,7 +5,8 @@
 // ===== MCU Time State =====
 static TimeEdit_t g_mcuCurrentTime = {2020, 1, 1, 0, 0, 0};  // Cache current calculated time
 static uint32_t g_mcuTimeBaseSeconds = 0;  // Unix-like seconds counter
-static uint32_t g_mcuTimeSyncCrystalSeconds = 0;  // Crystal-second snapshot at last sync
+static uint32_t g_mcuTimeSyncCrystalTicks256 = 0;  // Crystal tick snapshot at last sync
+static int16_t g_mcuDriftPpm = 0;  // Clock correction in parts per million
 static bool g_mcuHasSync = false;
 
 // ===== Manual Time Storage =====
@@ -20,7 +21,7 @@ void mcuTimeSync(TimeEdit_t* timeData) {
     // Convert full time to seconds for elapsed calculation
     // Must cast to uint32_t first to prevent 16-bit overflow during intermediate calculations
     g_mcuTimeBaseSeconds = ((uint32_t)timeData->hour * 3600) + ((uint32_t)timeData->minute * 60) + timeData->second;
-    g_mcuTimeSyncCrystalSeconds = crystalTimeGetSeconds();
+    g_mcuTimeSyncCrystalTicks256 = crystalTimeGetTicks256();
     g_mcuHasSync = true;
   }
 }
@@ -36,8 +37,17 @@ TimeEdit_t mcuTimeGetCurrent() {
     return (g_hasManualTime) ? g_manualTime : g_mcuCurrentTime;
   }
   
-  // Calculate elapsed time since last sync
-  uint32_t elapsedSeconds = crystalTimeGetSeconds() - g_mcuTimeSyncCrystalSeconds;
+  // Calculate elapsed ticks since last sync and apply ppm correction.
+  uint32_t elapsedTicks = crystalTimeGetTicks256() - g_mcuTimeSyncCrystalTicks256;
+  // Approximate 1e6 with 2^20 (1048576) to avoid expensive 64-bit division code.
+  int64_t corrTermQ20 = ((int64_t)elapsedTicks * (int64_t)g_mcuDriftPpm);
+  if (corrTermQ20 >= 0) corrTermQ20 += 524288LL;
+  else corrTermQ20 -= 524288LL;
+  int32_t correctionTicks = (int32_t)(corrTermQ20 >> 20);
+
+  int64_t correctedTicks = (int64_t)elapsedTicks + (int64_t)correctionTicks;
+  if (correctedTicks < 0) correctedTicks = 0;
+  uint32_t elapsedSeconds = (uint32_t)(correctedTicks >> 8);
   uint32_t currentTotalSeconds = g_mcuTimeBaseSeconds + elapsedSeconds;
   
   // Handle day wraparound (86400 seconds per day)
@@ -78,6 +88,14 @@ TimeEdit_t mcuTimeGetCurrent() {
 
 bool mcuTimeHasSync() {
   return g_mcuHasSync;
+}
+
+void mcuTimeSetDriftPpm(int16_t ppm) {
+  g_mcuDriftPpm = ppm;
+}
+
+int16_t mcuTimeGetDriftPpm(void) {
+  return g_mcuDriftPpm;
 }
 
 // ===== Save Manual Time =====

@@ -42,6 +42,169 @@ static GpsSyncResult s_gpsSyncLastResult = GPS_SYNC_RESULT_NONE;
 static uint32_t s_gpsSyncLastResultMs = 0;
 static const uint32_t kGpsSyncTimeoutMs = 120000;
 
+#if GPS_PPS_DISCIPLINE_ENABLED
+static bool s_syncAwaitingUpdatedTimeAfterPps = false;
+static uint32_t s_syncPpsArmedMs = 0;
+static const uint32_t kSyncPpsUpdatedWaitMs = 1500;
+#endif
+
+#if GPS_PPS_DISCIPLINE_ENABLED
+static volatile uint8_t s_gpsPpsEdgeCount = 0;
+static bool s_ppsHavePrevTick = false;
+static uint32_t s_ppsPrevTick256 = 0;
+static int32_t s_ppsAccumErrorTicks = 0;
+static uint8_t s_ppsSampleCount = 0;
+static int32_t s_ppsFilteredPpm = 0;
+static uint32_t s_lastPpsCommitDate = 0;
+static uint32_t s_lastPpsCommitTime = 0;
+static uint32_t s_lastGpsInfoSyncFixSentences = 0;
+static uint32_t s_lastGpsInfoSyncMs = 0;
+static bool s_gpsInfoAwaitingUpdatedTimeAfterPps = false;
+static uint32_t s_gpsInfoPpsArmedMs = 0;
+static const int16_t kPpsPpmPerErrorTick =
+  (int16_t)((1000000L + ((256L * GPS_PPS_DISCIPLINE_WINDOW) / 2L)) /
+        (256L * GPS_PPS_DISCIPLINE_WINDOW));
+
+void gpsPpsIsr() {
+  if (s_gpsPpsEdgeCount < 255U) {
+    s_gpsPpsEdgeCount++;
+  }
+}
+
+static void gpsTimeAddOneSecond(TimeEdit_t* t) {
+  if (t == nullptr) return;
+
+  if (++t->second < 60) return;
+  t->second = 0;
+  if (++t->minute < 60) return;
+  t->minute = 0;
+  if (++t->hour < 24) return;
+  t->hour = 0;
+
+  bool isLeapYear = ((t->year % 4 == 0) && (t->year % 100 != 0)) || (t->year % 400 == 0);
+  uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (isLeapYear) daysInMonth[1] = 29;
+
+  if (++t->day <= daysInMonth[t->month - 1]) return;
+  t->day = 1;
+  if (++t->month <= 12) return;
+  t->month = 1;
+  t->year++;
+}
+
+static void gpsPpsDisciplineReset() {
+  s_ppsHavePrevTick = false;
+  s_ppsPrevTick256 = 0;
+  s_ppsAccumErrorTicks = 0;
+  s_ppsSampleCount = 0;
+  s_lastPpsCommitDate = 0;
+  s_lastPpsCommitTime = 0;
+  s_gpsInfoAwaitingUpdatedTimeAfterPps = false;
+  s_gpsInfoPpsArmedMs = 0;
+}
+
+static bool gpsPpsPopEdge() {
+  bool hadEdge = false;
+  noInterrupts();
+  if (s_gpsPpsEdgeCount > 0) {
+    s_gpsPpsEdgeCount--;
+    hadEdge = true;
+  }
+  interrupts();
+  return hadEdge;
+}
+
+static bool gpsTryCommitFromPpsUpdatedSample() {
+  if (!gps.time.isUpdated() || !isGPSTimeReliable()) {
+    return false;
+  }
+
+  uint32_t rawDate = gps.date.value();
+  uint32_t rawTime = gps.time.value();
+  if (rawDate == s_lastPpsCommitDate && rawTime == s_lastPpsCommitTime) {
+    return false;
+  }
+
+  TimeEdit_t gpsTime;
+  gpsTime.year = gps.date.year();
+  gpsTime.month = gps.date.month();
+  gpsTime.day = gps.date.day();
+  gpsTime.hour = gps.time.hour();
+  gpsTime.minute = gps.time.minute();
+  gpsTime.second = gps.time.second();
+
+  // ATGM336H PPS rising edge is UTC-aligned; NMEA time payload can trail by
+  // one second at parse time, so align commit phase to PPS boundary.
+  gpsTimeAddOneSecond(&gpsTime);
+
+  mcuTimeSync(&gpsTime);
+  s_lastPpsCommitDate = rawDate;
+  s_lastPpsCommitTime = rawTime;
+  return true;
+}
+
+static void gpsInfoPpsDisciplineAndAutoSyncUpdate() {
+  if (!s_gpsPowerOn) {
+    gpsPpsDisciplineReset();
+    return;
+  }
+  if (g_currentMode != MODE_GPS_INFO) {
+    return;
+  }
+
+  while (gpsPpsPopEdge()) {
+    uint32_t nowTicks = crystalTimeGetTicks256();
+
+    if (s_ppsHavePrevTick) {
+      uint32_t deltaTicks = nowTicks - s_ppsPrevTick256;
+
+      // Reject obvious glitches and only accumulate near-1s intervals.
+      if (deltaTicks >= 200U && deltaTicks <= 312U) {
+        s_ppsAccumErrorTicks += (int32_t)deltaTicks - 256;
+        s_ppsSampleCount++;
+
+        if (s_ppsSampleCount >= GPS_PPS_DISCIPLINE_WINDOW) {
+          int32_t samplePpm = s_ppsAccumErrorTicks * (int32_t)kPpsPpmPerErrorTick;
+
+          // Low-pass filter to avoid overreacting to quantization jitter.
+          s_ppsFilteredPpm = (s_ppsFilteredPpm * 7 + samplePpm) / 8;
+          if (s_ppsFilteredPpm > 2000) s_ppsFilteredPpm = 2000;
+          if (s_ppsFilteredPpm < -2000) s_ppsFilteredPpm = -2000;
+          mcuTimeSetDriftPpm((int16_t)s_ppsFilteredPpm);
+
+          s_ppsAccumErrorTicks = 0;
+          s_ppsSampleCount = 0;
+        }
+      } else {
+        gpsPpsDisciplineReset();
+      }
+    }
+
+    s_ppsPrevTick256 = nowTicks;
+    s_ppsHavePrevTick = true;
+
+    // Arm UTC sync from the first updated GPS time after PPS edge.
+    s_gpsInfoAwaitingUpdatedTimeAfterPps = true;
+    s_gpsInfoPpsArmedMs = crystalTimeGetMillis();
+  }
+
+  if (s_gpsInfoAwaitingUpdatedTimeAfterPps) {
+    if (
+        gps.sentencesWithFix() > s_lastGpsInfoSyncFixSentences &&
+        crystalTimeElapsedMs(s_lastGpsInfoSyncMs, GPS_INFO_AUTO_SYNC_MIN_MS) &&
+        gpsTryCommitFromPpsUpdatedSample()) {
+      s_lastGpsInfoSyncFixSentences = gps.sentencesWithFix();
+      s_lastGpsInfoSyncMs = crystalTimeGetMillis();
+      s_gpsInfoAwaitingUpdatedTimeAfterPps = false;
+      s_gpsInfoPpsArmedMs = 0;
+    } else if (crystalTimeElapsedMs(s_gpsInfoPpsArmedMs, kSyncPpsUpdatedWaitMs)) {
+      s_gpsInfoAwaitingUpdatedTimeAfterPps = false;
+      s_gpsInfoPpsArmedMs = 0;
+    }
+  }
+}
+#endif
+
 static uint8_t s_gpsCfgAttempts = 0;
 static uint32_t s_gpsCfgNextAttemptMs = 1000;
 
@@ -61,6 +224,10 @@ void gpsSyncRequest(void) {
   s_gpsSyncState = GPS_SYNC_SEARCHING;
   s_gpsSyncStartedMs = crystalTimeGetMillis();
   s_gpsSyncStartFixSentences = gps.sentencesWithFix();
+#if GPS_PPS_DISCIPLINE_ENABLED
+  s_syncAwaitingUpdatedTimeAfterPps = false;
+  s_syncPpsArmedMs = 0;
+#endif
   gpsSetPower(true);
   g_modeEpoch++;
 }
@@ -107,6 +274,31 @@ static void gpsSyncUpdate(void) {
   // in this sync session (prevents immediate reuse of stale parser data).
   bool hasFreshFixThisSession = gps.sentencesWithFix() > s_gpsSyncStartFixSentences;
 
+#if GPS_PPS_DISCIPLINE_ENABLED
+  if (hasFreshFixThisSession) {
+    if (gpsPpsPopEdge()) {
+      s_syncAwaitingUpdatedTimeAfterPps = true;
+      s_syncPpsArmedMs = crystalTimeGetMillis();
+    }
+
+    if (s_syncAwaitingUpdatedTimeAfterPps && gpsTryCommitFromPpsUpdatedSample()) {
+      s_syncAwaitingUpdatedTimeAfterPps = false;
+      s_syncPpsArmedMs = 0;
+
+      s_gpsSyncLastResult = GPS_SYNC_RESULT_OK;
+      s_gpsSyncLastResultMs = crystalTimeGetMillis();
+      s_gpsSyncState = GPS_SYNC_IDLE;
+      g_modeEpoch++;
+      return;
+    }
+
+    if (s_syncAwaitingUpdatedTimeAfterPps &&
+        crystalTimeElapsedMs(s_syncPpsArmedMs, kSyncPpsUpdatedWaitMs)) {
+      s_syncAwaitingUpdatedTimeAfterPps = false;
+      s_syncPpsArmedMs = 0;
+    }
+  }
+#else
   if (hasFreshFixThisSession && isGPSTimeReliable()) {
     TimeEdit_t gpsTime;
     gpsTime.year = gps.date.year();
@@ -123,6 +315,7 @@ static void gpsSyncUpdate(void) {
     g_modeEpoch++;
     return;
   }
+#endif
 
   if (crystalTimeElapsedMs(s_gpsSyncStartedMs, kGpsSyncTimeoutMs)) {
     s_gpsSyncLastResult = GPS_SYNC_RESULT_TIMEOUT;
@@ -321,6 +514,10 @@ void setup() {
   // GPS power controls are managed dynamically by mode/sync policy.
   pinMode(PIN_GPS_POWER, OUTPUT);
   pinMode(PIN_GPS_ENABLE, OUTPUT);
+#if GPS_PPS_DISCIPLINE_ENABLED
+  pinMode(PIN_GPS_PPS, INPUT);
+  attachInterrupt(digitalPinToInterrupt(PIN_GPS_PPS), gpsPpsIsr, RISING);
+#endif
   gpsSetPower(false);
 
   buzzerInit(PIN_BUZZER);
@@ -362,6 +559,10 @@ void loop() {
 #endif
 
   gpsSyncUpdate();
+
+#if GPS_PPS_DISCIPLINE_ENABLED
+  gpsInfoPpsDisciplineAndAutoSyncUpdate();
+#endif
 
   // ===== Handle Button Presses =====
   ButtonEvent_t buttonEvent = handleButtons();
