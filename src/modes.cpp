@@ -90,6 +90,20 @@ static bool parseDecimalTenths(const char* text, uint16_t* outX10) {
   return true;
 }
 
+static void formatUint2(char out[3], uint8_t value) {
+  out[0] = (char)('0' + (value / 10U));
+  out[1] = (char)('0' + (value % 10U));
+  out[2] = '\0';
+}
+
+static void formatUint4(char out[5], uint16_t value) {
+  out[0] = (char)('0' + ((value / 1000U) % 10U));
+  out[1] = (char)('0' + ((value / 100U) % 10U));
+  out[2] = (char)('0' + ((value / 10U) % 10U));
+  out[3] = (char)('0' + (value % 10U));
+  out[4] = '\0';
+}
+
 static bool gpsTryGetPdopX10(uint16_t* pdopX10Out) {
   if (pdopX10Out == nullptr) return false;
   ensureGpsCustomParsersInit();
@@ -109,21 +123,82 @@ uint8_t g_currentMode = MODE_UTC_ONLY;
 uint32_t g_modeEpoch = 1;  // Start at 1 so first display triggers a clear and resets all caches
 
 // ===== Buzzer Control =====
-void buzzOnce(uint16_t durationMs) {
-  buzzerStart(1000);  // 1000 Hz tone
-  delay(durationMs);
+enum BuzzerCue : uint8_t {
+  BUZZ_CUE_NONE = 0,
+  BUZZ_CUE_SINGLE,
+  BUZZ_CUE_TIMESTAMP
+};
+
+static BuzzerCue s_buzzerCue = BUZZ_CUE_NONE;
+static uint8_t s_buzzerCueStep = 0;
+static uint16_t s_buzzerCueSingleMs = 0;
+static uint32_t s_buzzerCueStepStartedMs = 0;
+
+static void buzzerCueStop() {
   buzzerStop();
+  s_buzzerCue = BUZZ_CUE_NONE;
+  s_buzzerCueStep = 0;
+  s_buzzerCueSingleMs = 0;
+  s_buzzerCueStepStartedMs = 0;
+}
+
+void buzzOnce(uint16_t durationMs) {
+  if (timerAnyAlarmActive()) return;
+  s_buzzerCue = BUZZ_CUE_SINGLE;
+  s_buzzerCueStep = 0;
+  s_buzzerCueSingleMs = durationMs;
+  s_buzzerCueStepStartedMs = crystalTimeGetMillis();
+  buzzerStart(1000);  // 1000 Hz tone
 }
 
 static void buzzTimestampStamp() {
-  // Distinct two-tone stamp confirmation.
+  if (timerAnyAlarmActive()) return;
+  s_buzzerCue = BUZZ_CUE_TIMESTAMP;
+  s_buzzerCueStep = 0;
+  s_buzzerCueStepStartedMs = crystalTimeGetMillis();
   buzzerStart(1760);
-  delay(55);
-  buzzerStop();
-  delay(20);
-  buzzerStart(1175);
-  delay(85);
-  buzzerStop();
+}
+
+void modeAudioUpdate() {
+  if (s_buzzerCue == BUZZ_CUE_NONE) return;
+
+  if (timerAnyAlarmActive()) {
+    buzzerCueStop();
+    return;
+  }
+
+  uint32_t nowMs = crystalTimeGetMillis();
+
+  if (s_buzzerCue == BUZZ_CUE_SINGLE) {
+    if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, s_buzzerCueSingleMs)) {
+      buzzerCueStop();
+    }
+    return;
+  }
+
+  if (s_buzzerCue != BUZZ_CUE_TIMESTAMP) return;
+
+  switch (s_buzzerCueStep) {
+    case 0:
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 55)) {
+        buzzerStop();
+        s_buzzerCueStep = 1;
+        s_buzzerCueStepStartedMs = nowMs;
+      }
+      break;
+    case 1:
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 20)) {
+        buzzerStart(1175);
+        s_buzzerCueStep = 2;
+        s_buzzerCueStepStartedMs = nowMs;
+      }
+      break;
+    default:
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 85)) {
+        buzzerCueStop();
+      }
+      break;
+  }
 }
 
 // Build compact GPS status token used in the status line:
@@ -131,14 +206,14 @@ static void buzzTimestampStamp() {
 // AC=acquiring (satellites present but no position fix yet).
 static void buildGpsStatus(char out[3], bool timeReliable, int satCount, bool has3d) {
   if (has3d) {
-    strcpy(out, "3D");
+    out[0] = '3'; out[1] = 'D'; out[2] = '\0';
   } else if (gps.location.isValid()) {
-    strcpy(out, "2D");
+    out[0] = '2'; out[1] = 'D'; out[2] = '\0';
   } else if (satCount > 0) {
-    strcpy(out, "AC");
+    out[0] = 'A'; out[1] = 'C'; out[2] = '\0';
   } else {
     (void)timeReliable;
-    strcpy(out, "NO");
+    out[0] = 'N'; out[1] = 'O'; out[2] = '\0';
   }
 }
 
@@ -250,52 +325,30 @@ void displayModeUTCOnly() {
     char min_str[3] = "MM";
     char sec_str[3] = "SS";
     
-    if (field == EDIT_FIELD_YEAR && shouldShow) {
-      snprintf(year_str, sizeof(year_str), "%04d", editData.year);
-    } else if (field == EDIT_FIELD_YEAR && !shouldShow) {
-      strcpy(year_str, "    ");
-    } else {
-      snprintf(year_str, sizeof(year_str), "%04d", editData.year);
+    formatUint4(year_str, editData.year);
+    formatUint2(month_str, editData.month);
+    formatUint2(day_str, editData.day);
+    formatUint2(hour_str, editData.hour);
+    formatUint2(min_str, editData.minute);
+    formatUint2(sec_str, editData.second);
+
+    if (field == EDIT_FIELD_YEAR && !shouldShow) {
+      year_str[0] = ' '; year_str[1] = ' '; year_str[2] = ' '; year_str[3] = ' ';
     }
-    
-    if (field == EDIT_FIELD_MONTH && shouldShow) {
-      snprintf(month_str, sizeof(month_str), "%02d", editData.month);
-    } else if (field == EDIT_FIELD_MONTH && !shouldShow) {
-      strcpy(month_str, "  ");
-    } else {
-      snprintf(month_str, sizeof(month_str), "%02d", editData.month);
+    if (field == EDIT_FIELD_MONTH && !shouldShow) {
+      month_str[0] = ' '; month_str[1] = ' ';
     }
-    
-    if (field == EDIT_FIELD_DAY && shouldShow) {
-      snprintf(day_str, sizeof(day_str), "%02d", editData.day);
-    } else if (field == EDIT_FIELD_DAY && !shouldShow) {
-      strcpy(day_str, "  ");
-    } else {
-      snprintf(day_str, sizeof(day_str), "%02d", editData.day);
+    if (field == EDIT_FIELD_DAY && !shouldShow) {
+      day_str[0] = ' '; day_str[1] = ' ';
     }
-    
-    if (field == EDIT_FIELD_HOUR && shouldShow) {
-      snprintf(hour_str, sizeof(hour_str), "%02d", editData.hour);
-    } else if (field == EDIT_FIELD_HOUR && !shouldShow) {
-      strcpy(hour_str, "  ");
-    } else {
-      snprintf(hour_str, sizeof(hour_str), "%02d", editData.hour);
+    if (field == EDIT_FIELD_HOUR && !shouldShow) {
+      hour_str[0] = ' '; hour_str[1] = ' ';
     }
-    
-    if (field == EDIT_FIELD_MINUTE && shouldShow) {
-      snprintf(min_str, sizeof(min_str), "%02d", editData.minute);
-    } else if (field == EDIT_FIELD_MINUTE && !shouldShow) {
-      strcpy(min_str, "  ");
-    } else {
-      snprintf(min_str, sizeof(min_str), "%02d", editData.minute);
+    if (field == EDIT_FIELD_MINUTE && !shouldShow) {
+      min_str[0] = ' '; min_str[1] = ' ';
     }
-    
-    if (field == EDIT_FIELD_SECOND && shouldShow) {
-      snprintf(sec_str, sizeof(sec_str), "%02d", editData.second);
-    } else if (field == EDIT_FIELD_SECOND && !shouldShow) {
-      strcpy(sec_str, "  ");
-    } else {
-      snprintf(sec_str, sizeof(sec_str), "%02d", editData.second);
+    if (field == EDIT_FIELD_SECOND && !shouldShow) {
+      sec_str[0] = ' '; sec_str[1] = ' ';
     }
     
     snprintf(buf, LCD_BUF_SIZE, "%s-%s-%s %s:%s:%sZ",
@@ -694,9 +747,9 @@ void displayModeTimer() {
       TimerEditField_t field = timerEditGetField();
 
       char hh[3], mm[3], ss[3];
-      snprintf(hh, sizeof(hh), "%02d", eh);
-      snprintf(mm, sizeof(mm), "%02d", em);
-      snprintf(ss, sizeof(ss), "%02d", es);
+      formatUint2(hh, eh);
+      formatUint2(mm, em);
+      formatUint2(ss, es);
 
       if (!show) {
         if (field == TIMER_EDIT_HOUR) strcpy(hh, "  ");

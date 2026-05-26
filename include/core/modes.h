@@ -23,6 +23,7 @@
  * @param mode The mode to display (see MODE_* defines in config.h)
  */
 void updateDisplay(uint8_t mode);
+void modeAudioUpdate(void);
 
 /**
  * Handle button/encoder events for current mode

@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 #include "time/local_time.h"
+#include "time/crystal_time.h"
+#include "time/time_utils.h"
 
 // ===== UTC Offset Storage =====
 static int8_t g_utcOffset = 0;  // Default: UTC+00
@@ -78,20 +80,12 @@ TimeEdit_t calculateLocalTimeWithOffset(TimeEdit_t utcTime, int8_t offset) {
         localTime.year--;
         localTime.month = 12;
       }
-      // Get days in previous month
-      uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-      bool isLeap = (localTime.year % 400 == 0) || ((localTime.year % 4 == 0) && (localTime.year % 100 != 0));
-      uint8_t maxDay = daysInMonth[localTime.month - 1];
-      if (isLeap && localTime.month == 2) maxDay = 29;
-      localTime.day = maxDay;
+      localTime.day = timeDaysInMonth(localTime.year, localTime.month);
     }
     totalHour += 24;
   } else if (totalHour >= 24) {
     // Next day
-    uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    bool isLeap = (localTime.year % 400 == 0) || ((localTime.year % 4 == 0) && (localTime.year % 100 != 0));
-    uint8_t maxDay = daysInMonth[localTime.month - 1];
-    if (isLeap && localTime.month == 2) maxDay = 29;
+    uint8_t maxDay = timeDaysInMonth(localTime.year, localTime.month);
     
     localTime.day++;
     if (localTime.day > maxDay) {
@@ -113,7 +107,7 @@ TimeEdit_t calculateLocalTimeWithOffset(TimeEdit_t utcTime, int8_t offset) {
 void offsetEditStart(int8_t currentOffset) {
   g_offsetEditValue = currentOffset;
   g_offsetEditState = OFFSET_EDIT_ACTIVE;
-  g_offsetFlashToggleTime = millis();
+  g_offsetFlashToggleTime = crystalTimeGetMillis();
   g_offsetShowFlash = true;
 }
 
@@ -159,9 +153,9 @@ OffsetEditState_t offsetEditGetState() {
 bool offsetEditShouldFlash() {
   if (g_offsetEditState != OFFSET_EDIT_ACTIVE) return true;
   
-  if (millis() - g_offsetFlashToggleTime > OFFSET_FLASH_INTERVAL_MS) {
+  if (crystalTimeElapsedMs(g_offsetFlashToggleTime, OFFSET_FLASH_INTERVAL_MS)) {
     g_offsetShowFlash = !g_offsetShowFlash;
-    g_offsetFlashToggleTime = millis();
+    g_offsetFlashToggleTime = crystalTimeGetMillis();
   }
   
   return g_offsetShowFlash;

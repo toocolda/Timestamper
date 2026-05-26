@@ -585,6 +585,7 @@ void loop() {
 
   // ===== Background Engines =====
   timerModeUpdate();
+  modeAudioUpdate();
   backlightUpdate();
   gpsApplyPowerPolicy();
   gpsConfigureOutputMaybeRetry();

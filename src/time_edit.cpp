@@ -2,6 +2,7 @@
 #include "time/time_edit.h"
 #include "time/mcu_time.h"
 #include "time/crystal_time.h"
+#include "time/time_utils.h"
 #include "core/modes.h"
 
 // ===== Time Edit State =====
@@ -91,10 +92,7 @@ void timeEditRotaryInput(int32_t delta) {
       // Use signed int to handle negative wrapping correctly
       int8_t d = (int8_t)g_editData.day + direction;
       // Wrapping with validation - get max day for month
-      uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-      bool isLeap = (g_editData.year % 400 == 0) || ((g_editData.year % 4 == 0) && (g_editData.year % 100 != 0));
-      uint8_t maxDay = daysInMonth[g_editData.month - 1];
-      if (isLeap && g_editData.month == 2) maxDay = 29;
+      uint8_t maxDay = timeDaysInMonth(g_editData.year, g_editData.month);
       
       // Wrap at boundaries
       if (d < 1) d = maxDay;
@@ -192,13 +190,7 @@ bool isValidDate(uint16_t year, uint8_t month, uint8_t day) {
   if (month < 1 || month > 12) return false;
   
   // Validate day - check if day is in valid range for the month
-  uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  
-  // Check for leap year
-  bool isLeapYear = (year % 400 == 0) || ((year % 4 == 0) && (year % 100 != 0));
-  if (isLeapYear) daysInMonth[1] = 29;  // February has 29 days in leap year
-  
-  if (day < 1 || day > daysInMonth[month - 1]) return false;
+  if (day < 1 || day > timeDaysInMonth(year, month)) return false;
   
   return true;
 }

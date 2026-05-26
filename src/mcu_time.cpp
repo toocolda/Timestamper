@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "time/mcu_time.h"
 #include "time/crystal_time.h"
+#include "time/time_utils.h"
 
 // ===== MCU Time State =====
 static TimeEdit_t g_mcuCurrentTime = {2020, 1, 1, 0, 0, 0};  // Cache current calculated time
@@ -59,11 +60,7 @@ TimeEdit_t mcuTimeGetCurrent() {
     
     // Add daysElapsed to current date
     for (uint32_t i = 0; i < daysElapsed; i++) {
-      // Get max day for current month
-      uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-      bool isLeap = (current.year % 400 == 0) || ((current.year % 4 == 0) && (current.year % 100 != 0));
-      uint8_t maxDay = daysInMonth[current.month - 1];
-      if (isLeap && current.month == 2) maxDay = 29;
+      uint8_t maxDay = timeDaysInMonth(current.year, current.month);
       
       // Increment day
       current.day++;
