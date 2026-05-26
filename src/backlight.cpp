@@ -4,11 +4,11 @@
 #include "time/crystal_time.h"
 
 // ===== Backlight Configuration =====
-static const uint16_t kBacklightBlinkHalfPeriodMs = 200;   // 200ms on, 200ms off
-static const uint16_t kTimestampBlinkDurationMs    = 2000;  // 2s confirmation blink
-static const uint32_t kManualAutoOffMs             = 30000; // 30s manual auto-off
-static const uint8_t  kBluePwmLevels               = 4;      // Software PWM levels (0..4)
-static const uint16_t kBlueFadeStepMs              = 16;     // ~160ms full fade
+static const uint16_t kTimestampBlinkHalfPeriodMs = 200;   // 200ms on, 200ms off
+static const uint16_t kTimestampBlinkDurationMs   = 2000;  // 2s confirmation blink
+static const uint32_t kManualAutoOffMs            = 30000; // 30s manual auto-off
+static const uint8_t  kBluePwmLevels              = 4;      // Software PWM levels (0..4)
+static const uint16_t kBlueFadeStepMs             = 16;     // ~160ms full fade
 
 enum BacklightColor : uint8_t {
   BL_COLOR_NONE = 0,
@@ -21,6 +21,7 @@ enum BacklightColor : uint8_t {
 static uint8_t  s_bluePin                = 0;
 static uint8_t  s_redPin                 = 0;
 static uint8_t  s_greenPin               = 0;
+static uint32_t s_timestampBlinkStartMs  = 0;
 static uint32_t s_timestampBlinkUntilMs  = 0;
 static bool     s_manualOn               = false;
 static uint32_t s_manualOnUntilMs        = 0;
@@ -54,6 +55,7 @@ void backlightInit(uint8_t bluePin, uint8_t redPin, uint8_t greenPin) {
   pinMode(s_redPin, OUTPUT);
   pinMode(s_greenPin, OUTPUT);
   writeRgb(false, false, false);  // Start with backlight off
+  s_timestampBlinkStartMs = 0;
   s_timestampBlinkUntilMs = 0;
   s_colorCurrent = BL_COLOR_NONE;
   s_level = 0;
@@ -67,6 +69,7 @@ void backlightUpdate() {
 
   uint32_t now = crystalTimeGetMillis();
   bool alarmBlink = timerAnyAlarmActive();
+  bool alarmOn = timerAlarmToneOn();
   bool timestampBlink = (now < s_timestampBlinkUntilMs);
   
   // Expire manual-on if auto-off time has passed
@@ -79,19 +82,17 @@ void backlightUpdate() {
   bool desiredOn = false;
 
   if (alarmBlink) {
-    uint32_t blinkCycle = now % (2UL * kBacklightBlinkHalfPeriodMs);
     desiredColor = BL_COLOR_RED;
-    desiredOn = (blinkCycle < kBacklightBlinkHalfPeriodMs);
+    desiredOn = alarmOn;
   } else if (timestampBlink) {
-    uint32_t blinkCycle = now % (2UL * kBacklightBlinkHalfPeriodMs);
+    uint32_t blinkCycle = (now - s_timestampBlinkStartMs) % (2UL * kTimestampBlinkHalfPeriodMs);
     desiredColor = BL_COLOR_GREEN;
-    desiredOn = (blinkCycle < kBacklightBlinkHalfPeriodMs);
+    desiredOn = (blinkCycle < kTimestampBlinkHalfPeriodMs);
   } else if (s_manualOn) {
     desiredColor = BL_COLOR_BLUE;
     desiredOn = true;
   }
 
-  s_colorCurrent = desiredColor;
   s_targetLevel = desiredOn ? kBluePwmLevels : 0;
 
   if ((uint32_t)(now - s_fadeLastStepMs) >= kBlueFadeStepMs) {
@@ -103,27 +104,23 @@ void backlightUpdate() {
     }
   }
 
-  bool on = levelPwmOnNow(s_level);
-  switch (s_colorCurrent) {
-    case BL_COLOR_BLUE:
-      writeRgb(on, false, false);
-      break;
-    case BL_COLOR_RED:
-      writeRgb(false, on, false);
-      break;
-    case BL_COLOR_GREEN:
-      writeRgb(false, false, on);
-      break;
-    default:
-      writeRgb(false, false, false);
-      break;
+  if (desiredColor != BL_COLOR_NONE) {
+    s_colorCurrent = desiredColor;
+  } else if (s_level == 0) {
+    s_colorCurrent = BL_COLOR_NONE;
   }
+
+  bool on = levelPwmOnNow(s_level);
+  writeRgb(on && s_colorCurrent == BL_COLOR_BLUE,
+           on && s_colorCurrent == BL_COLOR_RED,
+           on && s_colorCurrent == BL_COLOR_GREEN);
 }
 
 // ===== Trigger timestamp blink (call when timestamp is captured) =====
 void backlightTriggerTimestamp() {
   if (s_bluePin == 0 || s_redPin == 0 || s_greenPin == 0) return;  // Not initialized
   uint32_t now = crystalTimeGetMillis();
+  s_timestampBlinkStartMs = now;
   s_timestampBlinkUntilMs = now + kTimestampBlinkDurationMs;
 }
 

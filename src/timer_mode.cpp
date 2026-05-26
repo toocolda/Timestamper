@@ -61,6 +61,10 @@ static int32_t timerCurrentSignedSeconds(uint8_t index) {
 }
 
 static void timerAlarmPatternUpdate(bool alarmWanted) {
+  static const uint16_t kAlarmToneAHz = 1047;
+  static const uint16_t kAlarmToneBHz = 784;
+  static const uint8_t kAlarmDutyPercent = 13;
+
   if (!alarmWanted) {
     if (g_alarmToneOn) {
       buzzerStop();
@@ -75,12 +79,12 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
   uint32_t stepDurMs = 0;
 
   switch (g_alarmStep) {
-    case 0: stepDurMs = 220; break;  // Tone A
-    case 1: stepDurMs = 90;  break;  // silence
-    case 2: stepDurMs = 220; break;  // Tone B
-    case 3: stepDurMs = 140; break;  // silence
-    case 4: stepDurMs = 260; break;  // Tone A long
-    case 5: stepDurMs = 420; break;  // gap
+    case 0: stepDurMs = 170; break;  // Tone A
+    case 1: stepDurMs = 65;  break;  // silence
+    case 2: stepDurMs = 170; break;  // Tone B
+    case 3: stepDurMs = 95;  break;  // silence
+    case 4: stepDurMs = 230; break;  // Tone A long
+    case 5: stepDurMs = 320; break;  // gap
     default: stepDurMs = 220; break;
   }
 
@@ -93,10 +97,10 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
 
   // Even steps with tones, odd steps silent.
   if (g_alarmStep == 0 || g_alarmStep == 4) {
-    buzzerStart(1400);
+    buzzerStartWithDuty(kAlarmToneAHz, kAlarmDutyPercent);
     g_alarmToneOn = true;
   } else if (g_alarmStep == 2) {
-    buzzerStart(900);
+    buzzerStartWithDuty(kAlarmToneBHz, kAlarmDutyPercent);
     g_alarmToneOn = true;
   } else {
     buzzerStop();
@@ -196,6 +200,10 @@ bool timerAlarmActive(uint8_t index) {
 
 bool timerAnyAlarmActive() {
   return g_timer.alarmActive;
+}
+
+bool timerAlarmToneOn(void) {
+  return g_timer.alarmActive && g_alarmToneOn;
 }
 
 void timerAcknowledgeAllAlarms() {

@@ -26,10 +26,17 @@ void buzzerInit(uint8_t pin) {
 }
 
 void buzzerStart(uint16_t frequencyHz) {
+  buzzerStartWithDuty(frequencyHz, kBuzzerDutyPercent);
+}
+
+void buzzerStartWithDuty(uint16_t frequencyHz, uint8_t dutyPercent) {
   if (s_buzzerPin == 255 || frequencyHz == 0) {
     buzzerStop();
     return;
   }
+
+  if (dutyPercent < 1U) dutyPercent = 1U;
+  if (dutyPercent > 95U) dutyPercent = 95U;
 
   uint8_t csBits = 0;
   uint16_t top = computeTop(frequencyHz, 1);
@@ -54,7 +61,7 @@ void buzzerStart(uint16_t frequencyHz) {
     csBits = _BV(CS12) | _BV(CS10);
   }
 
-  uint32_t compare = ((uint32_t)top * (uint32_t)kBuzzerDutyPercent) / 100UL;
+  uint32_t compare = ((uint32_t)top * (uint32_t)dutyPercent) / 100UL;
   if (compare < 1UL) compare = 1UL;
   if (compare >= top) compare = (uint32_t)top - 1UL;
 

@@ -722,7 +722,7 @@ void loop() {
         g_currentMode = newMode;
 
         g_modeEpoch++;  // Signal mode change to all display functions
-        buzzOnce(100);  // Buzz for 100ms on mode change
+        buzzOnce(70);  // Softer, shorter cue on mode change
 
         // Apply power policy immediately on mode transition.
         gpsApplyPowerPolicy();

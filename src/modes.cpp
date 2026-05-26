@@ -134,6 +134,15 @@ static uint8_t s_buzzerCueStep = 0;
 static uint16_t s_buzzerCueSingleMs = 0;
 static uint32_t s_buzzerCueStepStartedMs = 0;
 
+static const uint16_t kModeSwitchToneHz = 659;
+static const uint8_t kModeSwitchDutyPercent = 6;
+static const uint16_t kControlStartStopToneHz = 988;
+static const uint16_t kControlResetEditToneHz = 740;
+static const uint8_t kControlDutyPercent = 7;
+static const uint16_t kTimestampToneAHz = 784;
+static const uint16_t kTimestampToneBHz = 988;
+static const uint8_t kTimestampDutyPercent = 7;
+
 static void buzzerCueStop() {
   buzzerStop();
   s_buzzerCue = BUZZ_CUE_NONE;
@@ -142,13 +151,25 @@ static void buzzerCueStop() {
   s_buzzerCueStepStartedMs = 0;
 }
 
-void buzzOnce(uint16_t durationMs) {
+static void buzzSingle(uint16_t durationMs, uint16_t frequencyHz, uint8_t dutyPercent) {
   if (timerAnyAlarmActive()) return;
   s_buzzerCue = BUZZ_CUE_SINGLE;
   s_buzzerCueStep = 0;
   s_buzzerCueSingleMs = durationMs;
   s_buzzerCueStepStartedMs = crystalTimeGetMillis();
-  buzzerStart(1000);  // 1000 Hz tone
+  buzzerStartWithDuty(frequencyHz, dutyPercent);
+}
+
+void buzzOnce(uint16_t durationMs) {
+  buzzSingle(durationMs, kModeSwitchToneHz, kModeSwitchDutyPercent);
+}
+
+static void buzzControlStartStop() {
+  buzzSingle(34, kControlStartStopToneHz, kControlDutyPercent);
+}
+
+static void buzzControlResetEdit() {
+  buzzSingle(42, kControlResetEditToneHz, kControlDutyPercent);
 }
 
 static void buzzTimestampStamp() {
@@ -156,7 +177,7 @@ static void buzzTimestampStamp() {
   s_buzzerCue = BUZZ_CUE_TIMESTAMP;
   s_buzzerCueStep = 0;
   s_buzzerCueStepStartedMs = crystalTimeGetMillis();
-  buzzerStart(1760);
+  buzzerStartWithDuty(kTimestampToneAHz, kTimestampDutyPercent);
 }
 
 void modeAudioUpdate() {
@@ -180,21 +201,21 @@ void modeAudioUpdate() {
 
   switch (s_buzzerCueStep) {
     case 0:
-      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 55)) {
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 44)) {
         buzzerStop();
         s_buzzerCueStep = 1;
         s_buzzerCueStepStartedMs = nowMs;
       }
       break;
     case 1:
-      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 20)) {
-        buzzerStart(1175);
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 18)) {
+        buzzerStartWithDuty(kTimestampToneBHz, kTimestampDutyPercent);
         s_buzzerCueStep = 2;
         s_buzzerCueStepStartedMs = nowMs;
       }
       break;
     default:
-      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 85)) {
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 54)) {
         buzzerCueStop();
       }
       break;
@@ -1114,22 +1135,33 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
   } else if (mode == MODE_STOPWATCH) {
     if (event == BUTTON_ENC_SHORT || event == BUTTON_RIGHT_SHORT) {
       stopwatchStartStopToggle(0);
+      buzzControlStartStop();
     } else if (event == BUTTON_LEFT_SHORT) {
       stopwatchReset(0);
+      buzzControlResetEdit();
     }
   } else if (mode == MODE_TIMER) {
     if (event == BUTTON_ENC_LONG) {
+      bool wasEditing = timerEditIsActive();
       timerEditStart(0);
+      if (!wasEditing && timerEditIsActive()) {
+        buzzControlResetEdit();
+      }
     } else if (event == BUTTON_RIGHT_SHORT && timerEditIsActive()) {
       timerEditFinish();
+      buzzControlResetEdit();
     } else if (event == BUTTON_ENC_SHORT && timerEditIsActive()) {
       timerEditButtonPress();
+      buzzControlResetEdit();
     } else if (event == BUTTON_ENC_SHORT) {
       timerStartStopToggle(0);
+      buzzControlStartStop();
     } else if (event == BUTTON_RIGHT_SHORT) {
       timerStartStopToggle(0);
+      buzzControlStartStop();
     } else if (event == BUTTON_LEFT_SHORT) {
       timerReset(0);
+      buzzControlResetEdit();
     }
   } else if (mode == MODE_LOCAL_ONLY) {
     if (event == BUTTON_LEFT_SHORT) {
