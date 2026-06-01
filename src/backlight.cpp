@@ -22,7 +22,7 @@ static uint8_t  s_bluePin                = 0;
 static uint8_t  s_redPin                 = 0;
 static uint8_t  s_greenPin               = 0;
 static uint32_t s_timestampBlinkStartMs  = 0;
-static uint32_t s_timestampBlinkUntilMs  = 0;
+static bool     s_timestampBlinkActive   = false;
 static bool     s_manualOn               = false;
 static uint32_t s_manualOnUntilMs        = 0;
 
@@ -56,7 +56,7 @@ void backlightInit(uint8_t bluePin, uint8_t redPin, uint8_t greenPin) {
   pinMode(s_greenPin, OUTPUT);
   writeRgb(false, false, false);  // Start with backlight off
   s_timestampBlinkStartMs = 0;
-  s_timestampBlinkUntilMs = 0;
+  s_timestampBlinkActive = false;
   s_colorCurrent = BL_COLOR_NONE;
   s_level = 0;
   s_targetLevel = 0;
@@ -70,7 +70,15 @@ void backlightUpdate() {
   uint32_t now = crystalTimeGetMillis();
   bool alarmBlink = timerAnyAlarmActive();
   bool alarmOn = timerAlarmToneOn();
-  bool timestampBlink = (now < s_timestampBlinkUntilMs);
+  bool timestampBlink = false;
+
+  if (s_timestampBlinkActive) {
+    if (crystalTimeElapsedMs(s_timestampBlinkStartMs, kTimestampBlinkDurationMs)) {
+      s_timestampBlinkActive = false;
+    } else {
+      timestampBlink = true;
+    }
+  }
   
   // Expire manual-on if auto-off time has passed
   if (s_manualOn && now >= s_manualOnUntilMs) {
@@ -119,9 +127,8 @@ void backlightUpdate() {
 // ===== Trigger timestamp blink (call when timestamp is captured) =====
 void backlightTriggerTimestamp() {
   if (s_bluePin == 0 || s_redPin == 0 || s_greenPin == 0) return;  // Not initialized
-  uint32_t now = crystalTimeGetMillis();
-  s_timestampBlinkStartMs = now;
-  s_timestampBlinkUntilMs = now + kTimestampBlinkDurationMs;
+  s_timestampBlinkStartMs = crystalTimeGetMillis();
+  s_timestampBlinkActive = true;
 }
 
 // ===== Toggle manual backlight on/off (with 30s auto-off when turned on) =====
@@ -137,6 +144,5 @@ void backlightToggle() {
 
 // ===== Query if backlight is currently active =====
 bool backlightIsActive() {
-  uint32_t now = crystalTimeGetMillis();
-  return (s_manualOn || s_level > 0 || timerAnyAlarmActive() || now < s_timestampBlinkUntilMs);
+  return (s_manualOn || s_level > 0 || timerAnyAlarmActive() || s_timestampBlinkActive);
 }
