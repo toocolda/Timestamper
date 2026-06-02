@@ -445,6 +445,11 @@ ISR(PCINT2_vect) {
   s_deskInputWake = true;
 }
 
+// PCINT1 ISR — encoder A/B pin-change wake source while sleeping in desk mode.
+ISR(PCINT1_vect) {
+  s_deskInputWake = true;
+}
+
 static bool deskSleepShouldRun() {
   // Keep sleep restricted to desk mode, and avoid conflict with active timers/alarm tone.
   return (g_currentMode == MODE_LOCAL_ONLY) && !timerAnyRunning() && !timerAnyAlarmActive();
@@ -498,9 +503,12 @@ static void deskSleepMaybeRunOneCycle() {
   set_sleep_mode(SLEEP_MODE_PWR_SAVE);
   sleep_enable();
 
-  // Enable PCINT2 so button pins PD3-PD6 (TOP, ENC_BTN, LEFT, RIGHT) wake the MCU.
+  // Enable pin-change wake sources for desk mode:
+  // - PCINT2 group: button pins PD3-PD6 (TOP, ENC_BTN, LEFT, RIGHT)
+  // - PCINT1 group: encoder pins PE0-PE1 (A/B)
   PCMSK2 |= (1 << PCINT19) | (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22);
-  PCICR  |= (1 << PCIE2);
+  PCMSK1 |= (1 << PCINT8) | (1 << PCINT9);
+  PCICR  |= (1 << PCIE2) | (1 << PCIE1);
 
   noInterrupts();
   bool stillDesk = deskSleepShouldRun();
@@ -511,9 +519,10 @@ static void deskSleepMaybeRunOneCycle() {
   }
   sleep_disable();
 
-  // Disable PCINT2 immediately after wakeup so it doesn't fire outside sleep.
-  PCICR  &= (uint8_t)~(1 << PCIE2);
+  // Disable pin-change wake sources immediately after wakeup so they don't fire outside sleep.
+  PCICR  &= (uint8_t)~((1 << PCIE2) | (1 << PCIE1));
   PCMSK2 &= (uint8_t)~((1 << PCINT19) | (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22));
+  PCMSK1 &= (uint8_t)~((1 << PCINT8) | (1 << PCINT9));
 }
 
 void handleEncoder() {
