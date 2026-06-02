@@ -4,8 +4,9 @@
  * @file battery.h
  * @brief Battery voltage monitoring with percentage calculation
  *
- * Reads voltage divider on A0 from 18650 battery:
+ * Reads voltage divider on A0 from a 3xAAA battery pack:
  * - Divider: 27K (positive) + 100K (GND)
+ * - Nonlinear voltage-to-percent mapping for alkaline discharge behavior
  * - Updates battery percentage (0-99) once per second
  * - Only reads ADC when in UTC display mode to save power
  */

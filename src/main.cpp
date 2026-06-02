@@ -445,9 +445,47 @@ ISR(PCINT2_vect) {
   s_deskInputWake = true;
 }
 
-// PCINT1 ISR — encoder A/B pin-change wake source while sleeping in desk mode.
+// Encoder A/B pin-change wake source while sleeping in desk mode.
+// ATmega328PB can map PE0/PE1 in PCINT3; some variants use PCINT1.
+#if defined(PCINT3_vect)
+ISR(PCINT3_vect) {
+  s_deskInputWake = true;
+}
+#endif
+
+#if defined(PCINT1_vect)
 ISR(PCINT1_vect) {
   s_deskInputWake = true;
+}
+#endif
+
+static void deskEnableWakePinChange() {
+  // Buttons on PD3-PD6.
+  PCMSK2 |= (1 << PCINT19) | (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22);
+  PCICR  |= (1 << PCIE2);
+
+#if defined(PCMSK3) && defined(PCIE3) && defined(PCINT24) && defined(PCINT25)
+  // ATmega328PB: encoder on PE0/PE1 => PCINT24/PCINT25.
+  PCMSK3 |= (1 << PCINT24) | (1 << PCINT25);
+  PCICR  |= (1 << PCIE3);
+#elif defined(PCMSK1) && defined(PCIE1) && defined(PCINT8) && defined(PCINT9)
+  // Fallback mapping for variants exposing encoder on PCINT8/PCINT9.
+  PCMSK1 |= (1 << PCINT8) | (1 << PCINT9);
+  PCICR  |= (1 << PCIE1);
+#endif
+}
+
+static void deskDisableWakePinChange() {
+  PCICR  &= (uint8_t)~(1 << PCIE2);
+  PCMSK2 &= (uint8_t)~((1 << PCINT19) | (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22));
+
+#if defined(PCMSK3) && defined(PCIE3) && defined(PCINT24) && defined(PCINT25)
+  PCICR  &= (uint8_t)~(1 << PCIE3);
+  PCMSK3 &= (uint8_t)~((1 << PCINT24) | (1 << PCINT25));
+#elif defined(PCMSK1) && defined(PCIE1) && defined(PCINT8) && defined(PCINT9)
+  PCICR  &= (uint8_t)~(1 << PCIE1);
+  PCMSK1 &= (uint8_t)~((1 << PCINT8) | (1 << PCINT9));
+#endif
 }
 
 static bool deskSleepShouldRun() {
@@ -503,12 +541,7 @@ static void deskSleepMaybeRunOneCycle() {
   set_sleep_mode(SLEEP_MODE_PWR_SAVE);
   sleep_enable();
 
-  // Enable pin-change wake sources for desk mode:
-  // - PCINT2 group: button pins PD3-PD6 (TOP, ENC_BTN, LEFT, RIGHT)
-  // - PCINT1 group: encoder pins PE0-PE1 (A/B)
-  PCMSK2 |= (1 << PCINT19) | (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22);
-  PCMSK1 |= (1 << PCINT8) | (1 << PCINT9);
-  PCICR  |= (1 << PCIE2) | (1 << PCIE1);
+  deskEnableWakePinChange();
 
   noInterrupts();
   bool stillDesk = deskSleepShouldRun();
@@ -520,18 +553,19 @@ static void deskSleepMaybeRunOneCycle() {
   sleep_disable();
 
   // Disable pin-change wake sources immediately after wakeup so they don't fire outside sleep.
-  PCICR  &= (uint8_t)~((1 << PCIE2) | (1 << PCIE1));
-  PCMSK2 &= (uint8_t)~((1 << PCINT19) | (1 << PCINT20) | (1 << PCINT21) | (1 << PCINT22));
-  PCMSK1 &= (uint8_t)~((1 << PCINT8) | (1 << PCINT9));
+  deskDisableWakePinChange();
 }
 
 void handleEncoder() {
   uint8_t state = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
+  if (state != lastState) {
+    // Keep desk mode awake for slow turns even when this edge is not a full step.
+    s_deskInputWake = true;
+  }
   uint8_t index = (lastState << 2) | state;
 
   int8_t step = enc_table[index];
   if (step != 0) {
-    s_deskInputWake = true;
     encoderCount += step;
   }
   lastState = state;
