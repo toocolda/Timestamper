@@ -1,10 +1,12 @@
 #include "hardware/battery.h"
 #include <Arduino.h>
+#include <avr/io.h>
 #include "time/crystal_time.h"
+#include "core/config.h"
 
 // ===== Battery Configuration =====
-// Voltage divider: 27K (positive) + 100K (to GND) = 127K total
-// V_out = V_in * (100K / 127K) ≈ V_in * 0.787
+// Voltage divider: 100K (positive) + 100K (to GND) = 200K total
+// V_out = V_in * (100K / 200K) = V_in * 0.5
 static const uint16_t kBatteryUpdatePeriodMs = 1000;
 
 struct BatteryCurvePoint {
@@ -15,9 +17,10 @@ struct BatteryCurvePoint {
 // 3xAAA alkaline pack (series) discharge approximation under light/moderate load.
 // Tuned so ~3.3V is effectively empty for this project.
 static const BatteryCurvePoint kBatteryCurve[] = {
-  {3300, 0},
-  {3400, 3},
-  {3500, 8},
+  {3000, 0},
+  {3200, 5},
+  {3400, 10},
+  {3500, 15},
   {3600, 16},
   {3700, 28},
   {3800, 42},
@@ -26,6 +29,37 @@ static const BatteryCurvePoint kBatteryCurve[] = {
   {4200, 90},
   {4500, 99}
 };
+
+#if BATTERY_MEASURE_VIA_VCC
+static uint16_t batteryReadVccMv() {
+  uint8_t admuxPrev = ADMUX;
+#if defined(ADCSRB)
+  uint8_t adcsrbPrev = ADCSRB;
+#endif
+
+  // Measure internal 1.1V bandgap using AVcc as reference.
+  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+#if defined(ADCSRB) && defined(MUX5)
+  ADCSRB &= (uint8_t)~_BV(MUX5);
+#endif
+  delay(2);
+
+  ADCSRA |= _BV(ADSC);
+  while ((ADCSRA & _BV(ADSC)) != 0) {
+  }
+
+  uint16_t adc = ADC;
+
+  ADMUX = admuxPrev;
+#if defined(ADCSRB)
+  ADCSRB = adcsrbPrev;
+#endif
+
+  if (adc == 0) return 0;
+  // 1.1V * 1023 * 1000 = 1125300.
+  return (uint16_t)(1125300UL / (uint32_t)adc);
+}
+#endif
 
 static uint8_t batteryPercentFromMv(uint16_t batteryMv) {
   const uint8_t pointCount = (uint8_t)(sizeof(kBatteryCurve) / sizeof(kBatteryCurve[0]));
@@ -80,16 +114,32 @@ void batteryUpdate() {
   }
   s_lastBatterySampleMs = now;
   
-  // Read ADC (0-1023)
-  uint16_t adcValue = analogRead(s_batteryAdcPin);
-  
-  // Convert ADC to voltage at A0 (in mV)
-  // ADC range 0-1023 maps to 0-5000mV
-  uint16_t sensedMv = (uint32_t)adcValue * 5000UL / 1023UL;
-  
+  uint16_t batteryMv = 0;
+
+#if BATTERY_MEASURE_VIA_VCC
+  // Pack directly powers MCU: AVcc tracks battery, so estimate AVcc directly.
+  batteryMv = batteryReadVccMv();
+#else
+  // Divider mode: AVcc is regulated at a known voltage, so use DEFAULT reference.
+  analogReference(DEFAULT);
+  delay(2);
+
+  // Throw away first sample after reference switch, then take a smoothed read.
+  (void)analogRead(s_batteryAdcPin);
+  uint16_t adcValue = 0;
+  adcValue += analogRead(s_batteryAdcPin);
+  adcValue += analogRead(s_batteryAdcPin);
+  adcValue += analogRead(s_batteryAdcPin);
+  adcValue += analogRead(s_batteryAdcPin);
+  adcValue = (uint16_t)((adcValue + 2U) / 4U);
+
+  // Convert ADC to voltage at A0 (in mV) using regulated AVcc reference.
+  uint16_t sensedMv = (uint16_t)(((uint32_t)adcValue * (uint32_t)BATTERY_ADC_REF_MV + 511UL) / 1023UL);
+
   // Correct for voltage divider to get actual battery voltage (in mV)
-  // V_in = V_out * (127/100)
-  uint16_t batteryMv = (uint32_t)sensedMv * 127UL / 100UL;
+  // V_in = V_out * 2 for a 100K/100K divider.
+  batteryMv = (uint16_t)((uint32_t)sensedMv * 2UL);
+#endif
   
   // Convert battery voltage using a nonlinear 3xAAA curve and clamp to 0..99 for 2-digit UI.
   s_batteryPercent = batteryPercentFromMv(batteryMv);

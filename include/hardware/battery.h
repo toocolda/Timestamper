@@ -5,7 +5,10 @@
  * @brief Battery voltage monitoring with percentage calculation
  *
  * Reads voltage divider on A0 from a 3xAAA battery pack:
- * - Divider: 27K (positive) + 100K (GND)
+ * - Divider: 100K (positive) + 100K (GND)
+ * - Default config measures divider pin using regulated AVcc ADC reference
+ * - Optional AVcc estimation mode is controlled by BATTERY_MEASURE_VIA_VCC
+ *   in core/config.h; divider-mode reference is BATTERY_ADC_REF_MV
  * - Nonlinear voltage-to-percent mapping for alkaline discharge behavior
  * - Updates battery percentage (0-99) once per second
  * - Only reads ADC when in UTC display mode to save power

@@ -63,6 +63,15 @@
 // ===== ADC Pin Assignments =====
 #define PIN_BATTERY PIN_PC0
 
+// ===== Battery Measurement Mode =====
+// 1: Battery pack directly powers MCU Vcc; battery voltage estimated from
+//    internal bandgap vs AVcc.
+// 0: Battery measured on PIN_BATTERY divider using regulated AVcc reference.
+#define BATTERY_MEASURE_VIA_VCC 0
+
+// ADC reference used in divider mode when AVcc is regulated independently.
+#define BATTERY_ADC_REF_MV 3300U
+
 // ===== GPS Serial =====
 #define GPS_BAUD 9600
 #define GPS_UART_ENABLED 1
