@@ -517,11 +517,14 @@ static void deskSleepMaybeRunOneCycle() {
 }
 
 void handleEncoder() {
-  s_deskInputWake = true;
   uint8_t state = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
   uint8_t index = (lastState << 2) | state;
 
-  encoderCount += enc_table[index];
+  int8_t step = enc_table[index];
+  if (step != 0) {
+    s_deskInputWake = true;
+    encoderCount += step;
+  }
   lastState = state;
 }
 

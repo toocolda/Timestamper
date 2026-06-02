@@ -48,3 +48,12 @@ void ST7036::print(const char* str) {
         data(*str++);
     }
 }
+
+void ST7036::print(const __FlashStringHelper* str) {
+    PGM_P p = reinterpret_cast<PGM_P>(str);
+    char c = pgm_read_byte(p++);
+    while (c != '\0') {
+        data((uint8_t)c);
+        c = pgm_read_byte(p++);
+    }
+}

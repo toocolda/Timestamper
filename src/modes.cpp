@@ -9,6 +9,7 @@
 #include "core/config.h"
 #include "time/local_time.h"
 #include "time/mcu_time.h"
+#include "time/time_utils.h"
 #include "time/crystal_time.h"
 #include "display/st7036.h"
 #include "features/stopwatch.h"
@@ -47,10 +48,13 @@ static bool gpsTryGetAltitudeFeet(int16_t* altFeetOut) {
   if (gps.altitude.isValid()) {
     // TinyGPS++ altitude.value() is meters * 100.
     int32_t altMetersX100 = gps.altitude.value();
-    // feet = meters * 3.2808399, expressed from meters*100 with integer rounding.
-    int64_t scaled = (int64_t)altMetersX100 * 328084LL;
-    scaled += (scaled >= 0) ? 5000000LL : -5000000LL;
-    int32_t altFeet = (int32_t)(scaled / 10000000LL);
+    // Bounded 32-bit approximation: feet ~= meters*100 * 328 / 10000.
+    // Clamp input first to avoid overflow and because display already clamps to int16.
+    if (altMetersX100 > 1500000L) altMetersX100 = 1500000L;
+    if (altMetersX100 < -1500000L) altMetersX100 = -1500000L;
+    int32_t scaled = altMetersX100 * 328L;
+    scaled += (scaled >= 0) ? 5000L : -5000L;
+    int32_t altFeet = scaled / 10000L;
     if (altFeet < -999) altFeet = -999;
     if (altFeet > 32767) altFeet = 32767;
     *altFeetOut = (int16_t)altFeet;
@@ -286,7 +290,8 @@ bool isGPSTimeReliable() {
 
   if (year < 2020) return false;
   if (month < 1 || month > 12) return false;
-  if (day < 1 || day > 31) return false;
+  uint8_t maxDay = timeDaysInMonth((uint16_t)year, (uint8_t)month);
+  if (day < 1 || day > (int)maxDay) return false;
 
   return true;
 }
@@ -515,7 +520,10 @@ void displayModeUTCLocal() {
     if (shouldShowOffset) {
       snprintf(offsetStr, sizeof(offsetStr), "%+03d", currentOffset);  // Show as +00/-07/+14
     } else {
-      strcpy(offsetStr, "   ");  // Blank during flash-off
+      offsetStr[0] = ' ';
+      offsetStr[1] = ' ';
+      offsetStr[2] = ' ';
+      offsetStr[3] = '\0';  // Blank during flash-off
     }
     snprintf(buf2, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d %s",
              localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offsetStr);
@@ -657,9 +665,9 @@ void displayModeTimestampReview() {
 
   if (s_tsConfirmDeleteAll) {
     lcd.setCursor(0, 0);
-    lcd.print(" Delete ALL stamps? ");
+    lcd.print(F(" Delete ALL stamps? "));
     lcd.setCursor(0, 1);
-    lcd.print(" L:Cancel R:Delete ");
+    lcd.print(F(" L:Cancel R:Delete "));
     return;
   }
 
@@ -670,7 +678,7 @@ void displayModeTimestampReview() {
     snprintf(line1, LCD_BUF_SIZE, "%c00 -- -- --:--:--Z ", marker);
     lcd.print(line1);
     lcd.setCursor(0, 1);
-    lcd.print(" 00 -- -- --:--:-- ");
+    lcd.print(F(" 00 -- -- --:--:-- "));
     return;
   }
 
@@ -787,9 +795,9 @@ void displayModeTimer() {
       formatUint2(ss, es);
 
       if (!show) {
-        if (field == TIMER_EDIT_HOUR) strcpy(hh, "  ");
-        else if (field == TIMER_EDIT_MINUTE) strcpy(mm, "  ");
-        else if (field == TIMER_EDIT_SECOND) strcpy(ss, "  ");
+        if (field == TIMER_EDIT_HOUR) { hh[0] = ' '; hh[1] = ' '; hh[2] = '\0'; }
+        else if (field == TIMER_EDIT_MINUTE) { mm[0] = ' '; mm[1] = ' '; mm[2] = '\0'; }
+        else if (field == TIMER_EDIT_SECOND) { ss[0] = ' '; ss[1] = ' '; ss[2] = '\0'; }
       }
 
       lcd.setCursor(0, 1);
@@ -917,7 +925,6 @@ void displayModeLocalOnly() {
   lcd.setCursor(0, 1);
   lcd.print(line2);
 }
-
 // ===== Mode: GPS Info =====
 void displayModeGpsInfo() {
   static uint32_t lastEpoch = 0;
