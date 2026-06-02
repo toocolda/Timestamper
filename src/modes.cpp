@@ -22,6 +22,9 @@
 // - Uses per-mode cache signatures to minimize LCD writes
 // - Owns button event routing for mode-specific behavior
 
+// Firmware version
+static const char kFirmwareVersion[] = "v0.0.1  20260602";
+
 // Forward declarations from main.cpp
 extern ST7036 lcd;
 extern TinyGPSPlus gps;
@@ -288,6 +291,9 @@ bool isGPSTimeReliable() {
   return true;
 }
 
+// ===== Mode: UTC Only State =====
+static bool s_utcShowFirmware = false;
+
 // ===== Mode: UTC Only =====
 void displayModeUTCOnly() {
   static int lastSec = -1;
@@ -298,6 +304,7 @@ void displayModeUTCOnly() {
   static bool lastSyncSearching = false;
   static GpsSyncResult lastSyncResult = GPS_SYNC_RESULT_NONE;
   static uint16_t lastSyncAge = 0xFFFFU;
+  static bool lastShowFirmware = false;
   
   // Reset cache if mode changed
   if (lastEpoch != g_modeEpoch) {
@@ -309,6 +316,7 @@ void displayModeUTCOnly() {
     lastSyncSearching = false;
     lastSyncResult = GPS_SYNC_RESULT_NONE;
     lastSyncAge = 0xFFFFU;
+    lastShowFirmware = false;
     lcd.clear();
   }
   
@@ -400,7 +408,7 @@ void displayModeUTCOnly() {
 
     if (s != lastSec || timeValid != lastTimeValid ||
       syncSearching != lastSyncSearching || syncElapsed != lastSyncElapsed ||
-      syncResult != lastSyncResult || syncAge != lastSyncAge) {
+      syncResult != lastSyncResult || syncAge != lastSyncAge || s_utcShowFirmware != lastShowFirmware) {
       lcd.setCursor(0, 0);
       
       char buf[LCD_BUF_SIZE];
@@ -418,20 +426,25 @@ void displayModeUTCOnly() {
       
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
-      uint8_t batPercent = batteryGetPercentage();
-      if (syncSearching) {
-        uint16_t remain = gpsSyncGetRemainingSeconds();
-        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC SRCH %03u BAT:%02u"),
-                   (unsigned int)remain, (unsigned int)batPercent);
-      } else if (syncResult == GPS_SYNC_RESULT_OK) {
-        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC OK  %03us BAT:%02u"),
-                   (unsigned int)syncAge, (unsigned int)batPercent);
-      } else if (syncResult == GPS_SYNC_RESULT_TIMEOUT) {
-        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC TMO TRY  BAT:%02u"),
-                   (unsigned int)batPercent);
+      
+      if (s_utcShowFirmware) {
+        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("FW: %s"), kFirmwareVersion);
       } else {
-        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC NO       BAT:%02u"),
-                   (unsigned int)batPercent);
+        uint8_t batPercent = batteryGetPercentage();
+        if (syncSearching) {
+          uint16_t remain = gpsSyncGetRemainingSeconds();
+          snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC SRCH %03u BAT:%02u"),
+                     (unsigned int)remain, (unsigned int)batPercent);
+        } else if (syncResult == GPS_SYNC_RESULT_OK) {
+          snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC OK  %03us BAT:%02u"),
+                     (unsigned int)syncAge, (unsigned int)batPercent);
+        } else if (syncResult == GPS_SYNC_RESULT_TIMEOUT) {
+          snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC TMO TRY  BAT:%02u"),
+                     (unsigned int)batPercent);
+        } else {
+          snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC NO       BAT:%02u"),
+                     (unsigned int)batPercent);
+        }
       }
       lcd.print(buf2);
       
@@ -441,6 +454,7 @@ void displayModeUTCOnly() {
       lastSyncElapsed = syncElapsed;
       lastSyncResult = syncResult;
       lastSyncAge = syncAge;
+      lastShowFirmware = s_utcShowFirmware;
     }
   }
 }
@@ -1082,6 +1096,9 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
       timeEditStart(&currentTime);
     } else if (event == BUTTON_RIGHT_LONG && !timeEditIsActive()) {
       gpsSyncRequest();
+    } else if (event == BUTTON_LEFT_LONG) {
+      s_utcShowFirmware = !s_utcShowFirmware;
+      g_modeEpoch++;
     } else if (event == BUTTON_RIGHT_SHORT && timeEditIsActive()) {
       timeEditStop();
     } else if (event == BUTTON_ENC_SHORT && timeEditIsActive()) {
