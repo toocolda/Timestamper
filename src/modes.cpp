@@ -48,11 +48,13 @@ static bool gpsTryGetAltitudeFeet(int16_t* altFeetOut) {
   if (gps.altitude.isValid()) {
     // TinyGPS++ altitude.value() is meters * 100.
     int32_t altMetersX100 = gps.altitude.value();
-    // Bounded 32-bit approximation: feet ~= meters*100 * 328 / 10000.
-    // Clamp input first to avoid overflow and because display already clamps to int16.
-    if (altMetersX100 > 1500000L) altMetersX100 = 1500000L;
-    if (altMetersX100 < -1500000L) altMetersX100 = -1500000L;
-    int32_t scaled = altMetersX100 * 328L;
+    // Use meters*10 with 3281/10000 scale to keep 32-bit math and improve
+    // precision vs the prior 328/10000 approximation.
+    int32_t altMetersX10 = altMetersX100 / 10L;
+    // Keep multiply in signed 32-bit: 650000 * 3281 ~= 2.13e9.
+    if (altMetersX10 > 650000L) altMetersX10 = 650000L;
+    if (altMetersX10 < -650000L) altMetersX10 = -650000L;
+    int32_t scaled = altMetersX10 * 3281L;
     scaled += (scaled >= 0) ? 5000L : -5000L;
     int32_t altFeet = scaled / 10000L;
     if (altFeet < -999) altFeet = -999;
@@ -109,6 +111,97 @@ static void formatUint4(char out[5], uint16_t value) {
   out[2] = (char)('0' + ((value / 10U) % 10U));
   out[3] = (char)('0' + (value % 10U));
   out[4] = '\0';
+}
+
+static void formatUint3(char out[4], uint16_t value) {
+  if (value > 999U) value = 999U;
+  out[0] = (char)('0' + (value / 100U));
+  out[1] = (char)('0' + ((value / 10U) % 10U));
+  out[2] = (char)('0' + (value % 10U));
+  out[3] = '\0';
+}
+
+static void formatUtcOffset3(char out[4], int8_t offset, bool blank) {
+  if (blank) {
+    out[0] = ' ';
+    out[1] = ' ';
+    out[2] = ' ';
+    out[3] = '\0';
+    return;
+  }
+
+  int8_t absOffset = (offset < 0) ? (int8_t)(-offset) : offset;
+  if (absOffset > 99) absOffset = 99;
+  out[0] = (offset < 0) ? '-' : '+';
+  out[1] = (char)('0' + (absOffset / 10));
+  out[2] = (char)('0' + (absOffset % 10));
+  out[3] = '\0';
+}
+
+static void formatMmDdHhMmSsTail3(char out[LCD_BUF_SIZE], const TimeEdit_t* t, const char tail3[4]) {
+  out[0] = ' ';
+  formatUint2(&out[1], t->month);
+  out[3] = '-';
+  formatUint2(&out[4], t->day);
+  out[6] = ' ';
+  formatUint2(&out[7], t->hour);
+  out[9] = ':';
+  formatUint2(&out[10], t->minute);
+  out[12] = ':';
+  formatUint2(&out[13], t->second);
+  out[15] = ' ';
+  out[16] = tail3[0];
+  out[17] = tail3[1];
+  out[18] = tail3[2];
+  out[19] = '\0';
+}
+
+static void formatTimestampEmptySelectedLine(char out[LCD_BUF_SIZE], char marker) {
+  out[0] = marker;
+  out[1] = '0';
+  out[2] = '0';
+  out[3] = ' ';
+  out[4] = '-';
+  out[5] = '-';
+  out[6] = ' ';
+  out[7] = '-';
+  out[8] = '-';
+  out[9] = ' ';
+  out[10] = '-';
+  out[11] = '-';
+  out[12] = ':';
+  out[13] = '-';
+  out[14] = '-';
+  out[15] = ':';
+  out[16] = '-';
+  out[17] = '-';
+  out[18] = 'Z';
+  out[19] = ' ';
+  out[20] = '\0';
+}
+
+static void formatTimestampEmptySecondLine(char out[LCD_BUF_SIZE], char tzSuffix, char navArrow) {
+  out[0] = ' ';
+  out[1] = '0';
+  out[2] = '0';
+  out[3] = ' ';
+  out[4] = '-';
+  out[5] = '-';
+  out[6] = ' ';
+  out[7] = '-';
+  out[8] = '-';
+  out[9] = ' ';
+  out[10] = '-';
+  out[11] = '-';
+  out[12] = ':';
+  out[13] = '-';
+  out[14] = '-';
+  out[15] = ':';
+  out[16] = '-';
+  out[17] = '-';
+  out[18] = tzSuffix;
+  out[19] = navArrow;
+  out[20] = '\0';
 }
 
 static bool gpsTryGetPdopX10(uint16_t* pdopX10Out) {
@@ -509,24 +602,15 @@ void displayModeUTCLocal() {
     // Line 1: UTC time (MM-DD HH:MM:SS UTC)
     lcd.setCursor(0, 0);
     char buf1[LCD_BUF_SIZE];
-    snprintf(buf1, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d UTC",
-             utcTime.month, utcTime.day, utcTime.hour, utcTime.minute, utcTime.second);
+    formatMmDdHhMmSsTail3(buf1, &utcTime, "UTC");
     lcd.print(buf1);
     
     // Line 2: Local time with blinking offset
     lcd.setCursor(0, 1);
     char buf2[LCD_BUF_SIZE];
     char offsetStr[5];
-    if (shouldShowOffset) {
-      snprintf(offsetStr, sizeof(offsetStr), "%+03d", currentOffset);  // Show as +00/-07/+14
-    } else {
-      offsetStr[0] = ' ';
-      offsetStr[1] = ' ';
-      offsetStr[2] = ' ';
-      offsetStr[3] = '\0';  // Blank during flash-off
-    }
-    snprintf(buf2, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d %s",
-             localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offsetStr);
+    formatUtcOffset3(offsetStr, currentOffset, !shouldShowOffset);
+    formatMmDdHhMmSsTail3(buf2, &localTime, offsetStr);
     lcd.print(buf2);
     
   } else {
@@ -546,15 +630,15 @@ void displayModeUTCLocal() {
       // Line 1: UTC time (MM-DD HH:MM:SS UTC)
       lcd.setCursor(0, 0);
       char buf1[LCD_BUF_SIZE];
-      snprintf(buf1, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d UTC",
-               utcTime.month, utcTime.day, utcTime.hour, utcTime.minute, utcTime.second);
+      formatMmDdHhMmSsTail3(buf1, &utcTime, "UTC");
       lcd.print(buf1);
       
       // Line 2: Local time (MM-DD HH:MM:SS +/-offset)
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
-      snprintf(buf2, LCD_BUF_SIZE, " %02d-%02d %02d:%02d:%02d %+03d",
-               localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offset);
+      char offsetStr[4];
+      formatUtcOffset3(offsetStr, offset, false);
+      formatMmDdHhMmSsTail3(buf2, &localTime, offsetStr);
       lcd.print(buf2);
     }
   }
@@ -601,11 +685,21 @@ static void formatTimestampLine(char* out,
                                 char navArrow) {
   TimeEdit_t shown = showLocal ? calculateLocalTime(*utcStamp) : *utcStamp;
   char tzSuffix = showLocal ? 'L' : 'Z';
-  snprintf(out, LCD_BUF_SIZE, "%c%02d %02d-%02d %02d:%02d:%02d%c%c",
-           prefix, number,
-           shown.month, shown.day,
-           shown.hour, shown.minute, shown.second,
-           tzSuffix, navArrow);
+  out[0] = prefix;
+  formatUint2(&out[1], number);
+  out[3] = ' ';
+  formatUint2(&out[4], shown.month);
+  out[6] = '-';
+  formatUint2(&out[7], shown.day);
+  out[9] = ' ';
+  formatUint2(&out[10], shown.hour);
+  out[12] = ':';
+  formatUint2(&out[13], shown.minute);
+  out[15] = ':';
+  formatUint2(&out[16], shown.second);
+  out[18] = tzSuffix;
+  out[19] = navArrow;
+  out[20] = '\0';
 }
 
 void displayModeTimestampReview() {
@@ -675,7 +769,7 @@ void displayModeTimestampReview() {
     char marker = markerVisible ? '>' : ' ';
     lcd.setCursor(0, 0);
     char line1[LCD_BUF_SIZE];
-    snprintf(line1, LCD_BUF_SIZE, "%c00 -- -- --:--:--Z ", marker);
+    formatTimestampEmptySelectedLine(line1, marker);
     lcd.print(line1);
     lcd.setCursor(0, 1);
     lcd.print(F(" 00 -- -- --:--:-- "));
@@ -701,8 +795,7 @@ void displayModeTimestampReview() {
   if (hasSecond) {
     formatTimestampLine(line2, ' ', (uint8_t)(s_tsSelectedNewest + 2U), &t1, s_tsShowLocal, downArrow);
   } else {
-    snprintf(line2, LCD_BUF_SIZE, " 00 -- -- --:--:--%c%c",
-             s_tsShowLocal ? 'L' : 'Z', downArrow);
+    formatTimestampEmptySecondLine(line2, s_tsShowLocal ? 'L' : 'Z', downArrow);
   }
   lcd.print(line2);
 }
@@ -1005,17 +1098,19 @@ void displayModeGpsInfo() {
 
   if (gsValid) {
     uint16_t whole = (uint16_t)(gsTenths / 10U);
-    snprintf_P(gsStr, sizeof(gsStr), PSTR("%03u"), (unsigned int)whole);
+    formatUint3(gsStr, whole);
   }
   if (hdgValid) {
-    snprintf_P(hdgStr, sizeof(hdgStr), PSTR("%03u"), (unsigned int)headingDeg);
+    formatUint3(hdgStr, headingDeg);
     headingDegToCardinal3(headingDeg, hdgCard);
   }
   if (altValid) {
     snprintf_P(altStr, sizeof(altStr), PSTR("%5d"), (int)altFeet);
   }
   if (hasFreshFix) {
-    snprintf_P(gpsFixSat, sizeof(gpsFixSat), PSTR("%s%02d"), gpsStatus, sat);
+    gpsFixSat[0] = gpsStatus[0];
+    gpsFixSat[1] = gpsStatus[1];
+    formatUint2(&gpsFixSat[2], (uint8_t)sat);
   } else {
     gpsFixSat[0] = '-';
     gpsFixSat[1] = '-';
@@ -1025,7 +1120,8 @@ void displayModeGpsInfo() {
   }
   if (pdopValid) {
     if (pdopX10 > 99U) pdopX10 = 99U;
-    snprintf_P(pdopTok, sizeof(pdopTok), PSTR("P%02u"), (unsigned int)pdopX10);
+    pdopTok[0] = 'P';
+    formatUint2(&pdopTok[1], (uint8_t)pdopX10);
   }
 
   lcd.setCursor(0, 0);
