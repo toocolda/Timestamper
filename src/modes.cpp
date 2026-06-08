@@ -121,6 +121,144 @@ static void formatUint3(char out[4], uint16_t value) {
   out[3] = '\0';
 }
 
+static char* appendText(char* out, const char* text) {
+  while (*text != '\0') {
+    *out++ = *text++;
+  }
+  return out;
+}
+
+static char* appendUint2(char* out, uint8_t value) {
+  out[0] = (char)('0' + (value / 10U));
+  out[1] = (char)('0' + (value % 10U));
+  return out + 2;
+}
+
+static char* appendUint3(char* out, uint16_t value) {
+  if (value > 999U) value = 999U;
+  out[0] = (char)('0' + (value / 100U));
+  out[1] = (char)('0' + ((value / 10U) % 10U));
+  out[2] = (char)('0' + (value % 10U));
+  return out + 3;
+}
+
+static char* appendUint4(char* out, uint16_t value) {
+  out[0] = (char)('0' + ((value / 1000U) % 10U));
+  out[1] = (char)('0' + ((value / 100U) % 10U));
+  out[2] = (char)('0' + ((value / 10U) % 10U));
+  out[3] = (char)('0' + (value % 10U));
+  return out + 4;
+}
+
+static void formatIntRightAligned5(char out[6], int16_t value) {
+  uint16_t magnitude = (value < 0) ? (uint16_t)(-value) : (uint16_t)value;
+  if (magnitude > 9999U) magnitude = 9999U;
+
+  out[0] = ' ';
+  out[1] = ' ';
+  out[2] = ' ';
+  out[3] = ' ';
+  out[4] = ' ';
+  out[5] = '\0';
+
+  uint8_t index = 4;
+  do {
+    out[index--] = (char)('0' + (magnitude % 10U));
+    magnitude /= 10U;
+  } while (magnitude > 0U && index < 5U);
+
+  if (value < 0) {
+    out[index] = '-';
+  }
+}
+
+static void buildUtcDateTimeLine(char out[LCD_BUF_SIZE], const TimeEdit_t* t) {
+  char* p = out;
+  p = appendUint4(p, t->year);
+  *p++ = '-';
+  p = appendUint2(p, t->month);
+  *p++ = '-';
+  p = appendUint2(p, t->day);
+  *p++ = ' ';
+  p = appendUint2(p, t->hour);
+  *p++ = ':';
+  p = appendUint2(p, t->minute);
+  *p++ = ':';
+  p = appendUint2(p, t->second);
+  *p++ = 'Z';
+  *p = '\0';
+}
+
+static void buildUtcEditLine(char out[LCD_BUF_SIZE],
+                             const char yearStr[5],
+                             const char monthStr[3],
+                             const char dayStr[3],
+                             const char hourStr[3],
+                             const char minuteStr[3],
+                             const char secondStr[3]) {
+  char* p = out;
+  p = appendText(p, yearStr);
+  *p++ = '-';
+  p = appendText(p, monthStr);
+  *p++ = '-';
+  p = appendText(p, dayStr);
+  *p++ = ' ';
+  p = appendText(p, hourStr);
+  *p++ = ':';
+  p = appendText(p, minuteStr);
+  *p++ = ':';
+  p = appendText(p, secondStr);
+  *p++ = 'Z';
+  *p = '\0';
+}
+
+static void buildUtcEditStatusLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "EDIT UTC      BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void buildUtcFirmwareLine(char out[LCD_BUF_SIZE]) {
+  char* p = out;
+  p = appendText(p, "FW: ");
+  p = appendText(p, kFirmwareVersion);
+  *p = '\0';
+}
+
+static void buildUtcSyncSearchLine(char out[LCD_BUF_SIZE], uint16_t remaining, uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "SYNC SRCH ");
+  p = appendUint3(p, remaining);
+  p = appendText(p, " BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void buildUtcSyncOkLine(char out[LCD_BUF_SIZE], uint16_t syncAge, uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "SYNC OK  ");
+  p = appendUint3(p, syncAge);
+  *p++ = 's';
+  p = appendText(p, " BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void buildUtcSyncTimeoutLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "SYNC TMO TRY  BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void buildUtcSyncNoneLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "SYNC NO       BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
 static void formatUtcOffset3(char out[4], int8_t offset, bool blank) {
   if (blank) {
     out[0] = ' ';
@@ -478,15 +616,13 @@ void displayModeUTCOnly() {
       sec_str[0] = ' '; sec_str[1] = ' ';
     }
     
-    snprintf(buf, LCD_BUF_SIZE, "%s-%s-%s %s:%s:%sZ",
-             year_str, month_str, day_str, hour_str, min_str, sec_str);
+    buildUtcEditLine(buf, year_str, month_str, day_str, hour_str, min_str, sec_str);
     lcd.print(buf);
     
     // Show GPS status on line 2 as hint (blinking field is visual hint)
     lcd.setCursor(0, 1);
     uint8_t batPercent = batteryGetPercentage();
-    snprintf_P(buf, LCD_BUF_SIZE, PSTR("EDIT UTC      BAT:%02u"),
-           (unsigned int)batPercent);
+    buildUtcEditStatusLine(buf, batPercent);
     lcd.print(buf);
     
   } else {
@@ -500,8 +636,6 @@ void displayModeUTCOnly() {
 
     // Get current time from MCU (ticks based on elapsed ms)
     TimeEdit_t currentTime = mcuTimeGetCurrent();
-    int h = currentTime.hour;
-    int m = currentTime.minute;
     int s = currentTime.second;
 
     if (s != lastSec || timeValid != lastTimeValid ||
@@ -512,13 +646,10 @@ void displayModeUTCOnly() {
       char buf[LCD_BUF_SIZE];
       if (utcDisplayValid) {
         // Display with MCU time (which keeps ticking)
-        snprintf(buf, LCD_BUF_SIZE,
-                 "%04d-%02d-%02d %02d:%02d:%02dZ",
-                 currentTime.year, currentTime.month, currentTime.day,
-                 h, m, s);
+        buildUtcDateTimeLine(buf, &currentTime);
       } else {
-        snprintf(buf, LCD_BUF_SIZE,
-                 "YYYY-MM-DD HH:MM:SSZ");
+        memcpy(buf, "YYYY-MM-DD HH:MM:SSZ", 20);
+        buf[20] = '\0';
       }
       lcd.print(buf);
       
@@ -526,22 +657,18 @@ void displayModeUTCOnly() {
       char buf2[LCD_BUF_SIZE];
       
       if (s_utcShowFirmware) {
-        snprintf_P(buf2, LCD_BUF_SIZE, PSTR("FW: %s"), kFirmwareVersion);
+        buildUtcFirmwareLine(buf2);
       } else {
         uint8_t batPercent = batteryGetPercentage();
         if (syncSearching) {
           uint16_t remain = gpsSyncGetRemainingSeconds();
-          snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC SRCH %03u BAT:%02u"),
-                     (unsigned int)remain, (unsigned int)batPercent);
+          buildUtcSyncSearchLine(buf2, remain, batPercent);
         } else if (syncResult == GPS_SYNC_RESULT_OK) {
-          snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC OK  %03us BAT:%02u"),
-                     (unsigned int)syncAge, (unsigned int)batPercent);
+          buildUtcSyncOkLine(buf2, syncAge, batPercent);
         } else if (syncResult == GPS_SYNC_RESULT_TIMEOUT) {
-          snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC TMO TRY  BAT:%02u"),
-                     (unsigned int)batPercent);
+          buildUtcSyncTimeoutLine(buf2, batPercent);
         } else {
-          snprintf_P(buf2, LCD_BUF_SIZE, PSTR("SYNC NO       BAT:%02u"),
-                     (unsigned int)batPercent);
+          buildUtcSyncNoneLine(buf2, batPercent);
         }
       }
       lcd.print(buf2);
@@ -822,12 +949,23 @@ void displayModeStopwatch() {
 
     lcd.setCursor(0, 0);
     char line1[LCD_BUF_SIZE];
-    snprintf(line1, LCD_BUF_SIZE, "STOPWATCH        %s", running ? "RUN" : "STP");
+    memcpy(line1, "STOPWATCH        ", 17);
+    memcpy(&line1[17], running ? "RUN" : "STP", 3);
+    line1[20] = '\0';
     lcd.print(line1);
 
     lcd.setCursor(0, 1);
     char line2[LCD_BUF_SIZE];
-    snprintf(line2, LCD_BUF_SIZE, "     %02d:%02d:%02d.%1d     ", h, m, s, t);
+    memcpy(line2, "     ", 5);
+    appendUint2(&line2[5], h);
+    line2[7] = ':';
+    appendUint2(&line2[8], m);
+    line2[10] = ':';
+    appendUint2(&line2[11], s);
+    line2[13] = '.';
+    line2[14] = (char)('0' + t);
+    memcpy(&line2[15], "     ", 5);
+    line2[20] = '\0';
     lcd.print(line2);
 
     lastTenths = tenths;
@@ -873,7 +1011,9 @@ void displayModeTimer() {
     lcd.setCursor(0, 0);
     char head[LCD_BUF_SIZE];
     const char* state = alarm ? "ALM" : (running ? "RUN" : "STP");
-    snprintf(head, LCD_BUF_SIZE, "FUEL TIMER       %s", state);
+    memcpy(head, "FUEL TIMER       ", 17);
+    memcpy(&head[17], state, 3);
+    head[20] = '\0';
     lcd.print(head);
 
     if (editActive) {
@@ -895,13 +1035,28 @@ void displayModeTimer() {
 
       lcd.setCursor(0, 1);
       char line2[LCD_BUF_SIZE];
-      snprintf(line2, LCD_BUF_SIZE, "     - %s:%s:%s      ", hh, mm, ss);
+      memcpy(line2, "     - ", 7);
+      memcpy(&line2[7], hh, 2);
+      line2[9] = ':';
+      memcpy(&line2[10], mm, 2);
+      line2[12] = ':';
+      memcpy(&line2[13], ss, 2);
+      memcpy(&line2[15], "      ", 6);
+      line2[20] = '\0';
       lcd.print(line2);
     } else {
       lcd.setCursor(0, 1);
       char line2[LCD_BUF_SIZE];
-      snprintf(line2, LCD_BUF_SIZE, "     %c %02d:%02d:%02d     ",
-               elapsed ? '+' : '-', h, m, s);
+      memcpy(line2, "     ", 5);
+      line2[5] = elapsed ? '+' : '-';
+      line2[6] = ' ';
+      appendUint2(&line2[7], h);
+      line2[9] = ':';
+      appendUint2(&line2[10], m);
+      line2[12] = ':';
+      appendUint2(&line2[13], s);
+      memcpy(&line2[15], "     ", 5);
+      line2[20] = '\0';
       lcd.print(line2);
     }
 
@@ -972,41 +1127,76 @@ void displayModeLocalOnly() {
 
   // Build date part string.
   char datePart[20];
+  char* datePtr = datePart;
   switch (s_deskDateFmt) {
     case 0:  // ISO:        2026-04-16
-      snprintf(datePart, sizeof(datePart), "%04d-%02d-%02d",
-               t.year, t.month, t.day);
+      datePtr = appendUint4(datePtr, t.year);
+      *datePtr++ = '-';
+      datePtr = appendUint2(datePtr, t.month);
+      *datePtr++ = '-';
+      datePtr = appendUint2(datePtr, t.day);
       break;
     case 1:  // ISO+day:    Thu 2026-04-16
-      snprintf(datePart, sizeof(datePart), "%s %04d-%02d-%02d",
-               kDow[dow], t.year, t.month, t.day);
+      datePtr = appendText(datePtr, kDow[dow]);
+      *datePtr++ = ' ';
+      datePtr = appendUint4(datePtr, t.year);
+      *datePtr++ = '-';
+      datePtr = appendUint2(datePtr, t.month);
+      *datePtr++ = '-';
+      datePtr = appendUint2(datePtr, t.day);
       break;
     case 2:  // US:         Apr 16, 2026
-      snprintf(datePart, sizeof(datePart), "%s %02d, %04d",
-               kMon[mo], t.day, t.year);
+      datePtr = appendText(datePtr, kMon[mo]);
+      *datePtr++ = ' ';
+      datePtr = appendUint2(datePtr, t.day);
+      *datePtr++ = ',';
+      *datePtr++ = ' ';
+      datePtr = appendUint4(datePtr, t.year);
       break;
     case 3:  // US+day:     Thu Apr 16 2026
-      snprintf(datePart, sizeof(datePart), "%s %s %02d %04d",
-               kDow[dow], kMon[mo], t.day, t.year);
+      datePtr = appendText(datePtr, kDow[dow]);
+      *datePtr++ = ' ';
+      datePtr = appendText(datePtr, kMon[mo]);
+      *datePtr++ = ' ';
+      datePtr = appendUint2(datePtr, t.day);
+      *datePtr++ = ' ';
+      datePtr = appendUint4(datePtr, t.year);
       break;
     case 4:  // EU+day:     Thu 16 Apr 2026
     default:
-      snprintf(datePart, sizeof(datePart), "%s %02d %s %04d",
-               kDow[dow], t.day, kMon[mo], t.year);
+      datePtr = appendText(datePtr, kDow[dow]);
+      *datePtr++ = ' ';
+      datePtr = appendUint2(datePtr, t.day);
+      *datePtr++ = ' ';
+      datePtr = appendText(datePtr, kMon[mo]);
+      *datePtr++ = ' ';
+      datePtr = appendUint4(datePtr, t.year);
       break;
   }
+  *datePtr = '\0';
 
   // Build time part string.
   char timePart[14];
+  char* timePtr = timePart;
   if (s_deskIs12H) {
     uint8_t hh = t.hour % 12;
     if (hh == 0) hh = 12;
-    snprintf(timePart, sizeof(timePart), "%02d:%02d:%02d %s",
-             hh, t.minute, t.second, t.hour < 12 ? "AM" : "PM");
+    timePtr = appendUint2(timePtr, hh);
+    *timePtr++ = ':';
+    timePtr = appendUint2(timePtr, t.minute);
+    *timePtr++ = ':';
+    timePtr = appendUint2(timePtr, t.second);
+    *timePtr++ = ' ';
+    *timePtr++ = (t.hour < 12) ? 'A' : 'P';
+    *timePtr++ = 'M';
   } else {
-    snprintf(timePart, sizeof(timePart), "%02d:%02d:%02d",
-             t.hour, t.minute, t.second);
+    timePtr = appendUint2(timePtr, t.hour);
+    *timePtr++ = ':';
+    timePtr = appendUint2(timePtr, t.minute);
+    *timePtr++ = ':';
+    timePtr = appendUint2(timePtr, t.second);
   }
+  *timePtr = '\0';
 
   // Center both lines.
   char line1[LCD_BUF_SIZE], line2[LCD_BUF_SIZE];
@@ -1105,7 +1295,7 @@ void displayModeGpsInfo() {
     headingDegToCardinal3(headingDeg, hdgCard);
   }
   if (altValid) {
-    snprintf_P(altStr, sizeof(altStr), PSTR("%5d"), (int)altFeet);
+    formatIntRightAligned5(altStr, altFeet);
   }
   if (hasFreshFix) {
     gpsFixSat[0] = gpsStatus[0];
@@ -1126,12 +1316,25 @@ void displayModeGpsInfo() {
 
   lcd.setCursor(0, 0);
   char line1[LCD_BUF_SIZE];
-  snprintf_P(line1, LCD_BUF_SIZE, PSTR("ALT:%sFT GS:%sKT"), altStr, gsStr);
+  memcpy(line1, "ALT:", 4);
+  memcpy(&line1[4], altStr, 5);
+  memcpy(&line1[9], "FT GS:", 6);
+  memcpy(&line1[15], gsStr, 3);
+  memcpy(&line1[18], "KT", 2);
+  line1[20] = '\0';
   lcd.print(line1);
 
   lcd.setCursor(0, 1);
   char line2[LCD_BUF_SIZE];
-  snprintf_P(line2, LCD_BUF_SIZE, PSTR("HDG:%s %s %s %s"), hdgStr, hdgCard, gpsFixSat, pdopTok);
+  memcpy(line2, "HDG:", 4);
+  memcpy(&line2[4], hdgStr, 3);
+  line2[7] = ' ';
+  memcpy(&line2[8], hdgCard, 3);
+  line2[11] = ' ';
+  memcpy(&line2[12], gpsFixSat, 4);
+  line2[16] = ' ';
+  memcpy(&line2[17], pdopTok, 3);
+  line2[20] = '\0';
   lcd.print(line2);
 }
 
