@@ -49,10 +49,6 @@ GpsSyncResult gpsSyncGetLastResult(void);
 uint16_t gpsSyncGetLastResultAgeSeconds(void);
 void gpsSyncClearLastResult(void);
 
-// ===== Desk Sleep Diagnostics =====
-// True when MCU is currently eligible to enter Desk Mode sleep policy.
-extern bool g_deskSleepEligible;
-
 // ===== Mode State =====
 extern uint8_t g_currentMode;
 extern uint32_t g_modeEpoch;  // Incremented when display needs refresh

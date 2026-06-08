@@ -1013,9 +1013,6 @@ void displayModeLocalOnly() {
   deskCenterLine(line1, datePart);
   deskCenterLine(line2, timePart);
 
-  // Right-edge debug marker for battery testing: S=sleep eligible, A=active.
-  line2[19] = g_deskSleepEligible ? 'S' : 'A';
-
   lcd.setCursor(0, 0);
   lcd.print(line1);
   lcd.setCursor(0, 1);

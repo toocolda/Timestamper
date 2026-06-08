@@ -441,8 +441,6 @@ const int8_t enc_table[16] = {
   0,  1, -1,  0
 };
 
-bool g_deskSleepEligible = false;
-
 // ===== Desk-Mode Sleep Control =====
 static volatile bool s_deskInputWake = false;
 static bool s_deskSleepArmed = false;
@@ -508,9 +506,7 @@ static bool deskSleepShouldRun() {
   bool gpsOff = !s_gpsPowerOn;
 
   // Enter desk sleep only when all low-power conditions are satisfied.
-  g_deskSleepEligible =
-    (g_currentMode == MODE_LOCAL_ONLY) && gpsOff && noTimerActivity && noStopwatchActivity && noManualEdit;
-  return g_deskSleepEligible;
+  return (g_currentMode == MODE_LOCAL_ONLY) && gpsOff && noTimerActivity && noStopwatchActivity && noManualEdit;
 }
 
 static void deskSleepResetState() {
@@ -563,14 +559,19 @@ static void deskSleepMaybeRunOneCycle() {
 
   deskEnableWakePinChange();
 
+  uint8_t adcsraPrev = ADCSRA;
+  ADCSRA &= (uint8_t)~_BV(ADEN);
+
   noInterrupts();
   bool stillDesk = deskSleepShouldRun();
-  interrupts();
-
   if (stillDesk) {
+    interrupts();
     sleep_cpu();
+  } else {
+    interrupts();
   }
   sleep_disable();
+  ADCSRA = adcsraPrev;
 
   // Disable pin-change wake sources immediately after wakeup so they don't fire outside sleep.
   deskDisableWakePinChange();
