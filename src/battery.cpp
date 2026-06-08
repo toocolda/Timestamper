@@ -99,6 +99,10 @@ static uint8_t s_batteryPercent = 0;
 void batteryInit(uint8_t adcPin) {
   s_batteryAdcPin = adcPin;
   pinMode(adcPin, INPUT);
+#if defined(DIDR0) && defined(ADC0D)
+  // Disable digital input buffer on ADC0 (PIN_PC0) to reduce analog pin leakage.
+  DIDR0 |= _BV(ADC0D);
+#endif
   // Force immediate first read without waiting for the first period.
   s_lastBatterySampleMs = crystalTimeGetMillis() - kBatteryUpdatePeriodMs;
   batteryUpdate();  // Initial read
@@ -107,6 +111,18 @@ void batteryInit(uint8_t adcPin) {
 // ===== Update battery percentage (internally throttled to 1 second) =====
 void batteryUpdate() {
   if (s_batteryAdcPin == 0) return;  // Not initialized
+
+  // ADC may be power-gated by mode policy; re-enable before sampling.
+#if defined(PRR)
+#if defined(PRADC)
+  PRR &= (uint8_t)~_BV(PRADC);
+#endif
+#elif defined(PRR0)
+#if defined(PRADC)
+  PRR0 &= (uint8_t)~_BV(PRADC);
+#endif
+#endif
+  ADCSRA |= _BV(ADEN);
   
   uint32_t now = crystalTimeGetMillis();
   if (now - s_lastBatterySampleMs < kBatteryUpdatePeriodMs) {

@@ -450,6 +450,37 @@ static uint32_t s_deskLastDisplaySecond = 0xFFFFFFFFUL;
 static const uint32_t kDeskSleepDelayMs = 5000;  // Grace period before first sleep
 static const uint32_t kDeskInputAwakeMs = 700;   // Keep loop awake after input wake for debounce/long-press
 
+static void adcSetEnabled(bool enabled) {
+  if (enabled) {
+#if defined(PRR)
+#if defined(PRADC)
+    PRR &= (uint8_t)~_BV(PRADC);
+#endif
+#elif defined(PRR0)
+#if defined(PRADC)
+    PRR0 &= (uint8_t)~_BV(PRADC);
+#endif
+#endif
+    ADCSRA |= _BV(ADEN);
+  } else {
+    ADCSRA &= (uint8_t)~_BV(ADEN);
+#if defined(PRR)
+#if defined(PRADC)
+    PRR |= _BV(PRADC);
+#endif
+#elif defined(PRR0)
+#if defined(PRADC)
+    PRR0 |= _BV(PRADC);
+#endif
+#endif
+  }
+}
+
+static void adcApplyModePolicy() {
+  // Battery ADC is only used in UTC-only mode.
+  adcSetEnabled(g_currentMode == MODE_UTC_ONLY);
+}
+
 // PCINT2 ISR — intentionally empty; fires on any change of pins 4-7 (buttons)
 // to wake the MCU from PWR_SAVE sleep so button press is serviced immediately.
 ISR(PCINT2_vect) {
@@ -562,15 +593,89 @@ static void deskSleepMaybeRunOneCycle() {
   uint8_t adcsraPrev = ADCSRA;
   ADCSRA &= (uint8_t)~_BV(ADEN);
 
+#if defined(PRR)
+  uint8_t prrPrev = PRR;
+  uint8_t prrMask = 0;
+#if defined(PRADC)
+  prrMask |= _BV(PRADC);
+#endif
+#if defined(PRUSART0)
+  prrMask |= _BV(PRUSART0);
+#endif
+#if defined(PRSPI)
+  prrMask |= _BV(PRSPI);
+#endif
+#if defined(PRTIM0)
+  prrMask |= _BV(PRTIM0);
+#endif
+#if defined(PRTIM1)
+  prrMask |= _BV(PRTIM1);
+#endif
+#if defined(PRTWI)
+  prrMask |= _BV(PRTWI);
+#endif
+  PRR |= prrMask;
+#elif defined(PRR0)
+  uint8_t prr0Prev = PRR0;
+  uint8_t prr0Mask = 0;
+#if defined(PRADC)
+  prr0Mask |= _BV(PRADC);
+#endif
+#if defined(PRUSART0)
+  prr0Mask |= _BV(PRUSART0);
+#endif
+#if defined(PRSPI0)
+  prr0Mask |= _BV(PRSPI0);
+#elif defined(PRSPI)
+  prr0Mask |= _BV(PRSPI);
+#endif
+#if defined(PRTIM0)
+  prr0Mask |= _BV(PRTIM0);
+#endif
+#if defined(PRTIM1)
+  prr0Mask |= _BV(PRTIM1);
+#endif
+#if defined(PRTWI0)
+  prr0Mask |= _BV(PRTWI0);
+#elif defined(PRTWI)
+  prr0Mask |= _BV(PRTWI);
+#endif
+  PRR0 |= prr0Mask;
+#if defined(PRR1)
+  uint8_t prr1Prev = PRR1;
+  uint8_t prr1Mask = 0;
+#if defined(PRSPI1)
+  prr1Mask |= _BV(PRSPI1);
+#endif
+#if defined(PRTWI1)
+  prr1Mask |= _BV(PRTWI1);
+#endif
+  PRR1 |= prr1Mask;
+#endif
+#endif
+
   noInterrupts();
   bool stillDesk = deskSleepShouldRun();
   if (stillDesk) {
+#if defined(BODS) && defined(BODSE)
+    sleep_bod_disable();
+#endif
     interrupts();
     sleep_cpu();
   } else {
     interrupts();
   }
   sleep_disable();
+
+#if defined(PRR)
+  PRR = prrPrev;
+#elif defined(PRR0)
+  PRR0 = prr0Prev;
+#if defined(PRR1)
+  PRR1 = prr1Prev;
+#endif
+#endif
+
   ADCSRA = adcsraPrev;
 
   // Disable pin-change wake sources immediately after wakeup so they don't fire outside sleep.
@@ -635,6 +740,13 @@ void setup() {
   backlightInit(PIN_BACKLIGHT_BLUE, PIN_BACKLIGHT_RED, PIN_BACKLIGHT_GREEN);
   batteryInit(PIN_BATTERY);
 
+#if defined(ACSR) && defined(ACD)
+  // Comparator is unused in this firmware; keep it off for lower baseline current.
+  ACSR |= _BV(ACD);
+#endif
+
+  adcApplyModePolicy();
+
   lastState = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
 
   initButtons();
@@ -655,6 +767,7 @@ void loop() {
   modeAudioUpdate();
   backlightUpdate();
   gpsApplyPowerPolicy();
+  adcApplyModePolicy();
   gpsConfigureOutputMaybeRetry();
   // Battery is only shown in UTC-only mode, so avoid unnecessary ADC reads elsewhere.
   if (g_currentMode == MODE_UTC_ONLY) {
