@@ -644,8 +644,17 @@ static void deskSleepMaybeRunOneCycle() {
 #if defined(PRR1)
   uint8_t prr1Prev = PRR1;
   uint8_t prr1Mask = 0;
+#if defined(PRUSART1)
+  prr1Mask |= _BV(PRUSART1);
+#endif
 #if defined(PRSPI1)
   prr1Mask |= _BV(PRSPI1);
+#endif
+#if defined(PRTIM3)
+  prr1Mask |= _BV(PRTIM3);
+#endif
+#if defined(PRTIM4)
+  prr1Mask |= _BV(PRTIM4);
 #endif
 #if defined(PRTWI1)
   prr1Mask |= _BV(PRTWI1);
