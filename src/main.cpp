@@ -44,6 +44,7 @@ static GpsSyncResult s_gpsSyncLastResult = GPS_SYNC_RESULT_NONE;
 static uint32_t s_gpsSyncLastResultMs = 0;
 static const uint32_t kGpsSyncTimeoutMs = 120000;
 static const uint32_t kGpsInfoPowerHoldMs = 30000;
+static bool s_gpsInfoFirstSyncDoneSincePowerOn = false;
 
 #if GPS_PPS_DISCIPLINE_ENABLED
 static bool s_syncAwaitingUpdatedTimeAfterPps = false;
@@ -197,15 +198,20 @@ static void gpsInfoPpsDisciplineAndAutoSyncUpdate() {
   }
 
   if (s_gpsInfoAwaitingUpdatedTimeAfterPps) {
-    bool allowSyncByInterval = crystalTimeElapsedMs(s_lastGpsInfoSyncMs, GPS_INFO_AUTO_SYNC_MIN_MS);
-    bool allowImmediateSync = gpsSyncIsSearching() || !mcuTimeHasSync();
+    bool hasFreshFixSincePowerOn = gps.sentencesWithFix() > s_gpsPowerOnStartFixSentences;
+    bool hasFixSinceLastGpsInfoSync = gps.sentencesWithFix() > s_lastGpsInfoSyncFixSentences;
+    bool allowSyncByInterval =
+      !s_gpsInfoFirstSyncDoneSincePowerOn ||
+      crystalTimeElapsedMs(s_lastGpsInfoSyncMs, GPS_INFO_AUTO_SYNC_MIN_MS);
     if (
-        gps.sentencesWithFix() > s_lastGpsInfoSyncFixSentences &&
-        (allowSyncByInterval || allowImmediateSync) &&
+        hasFreshFixSincePowerOn &&
+        hasFixSinceLastGpsInfoSync &&
+        allowSyncByInterval &&
         gpsTryCommitFromPpsUpdatedSample()) {
       uint32_t nowMs = crystalTimeGetMillis();
       s_lastGpsInfoSyncFixSentences = gps.sentencesWithFix();
       s_lastGpsInfoSyncMs = nowMs;
+      s_gpsInfoFirstSyncDoneSincePowerOn = true;
       s_gpsSyncLastResult = GPS_SYNC_RESULT_OK;
       s_gpsSyncLastResultMs = nowMs;
       s_gpsSyncState = GPS_SYNC_IDLE;
@@ -229,6 +235,11 @@ static void gpsSetPower(bool on) {
   s_gpsPowerOn = on;
   if (on) {
     s_gpsPowerOnStartFixSentences = gps.sentencesWithFix();
+#if GPS_PPS_DISCIPLINE_ENABLED
+    s_lastGpsInfoSyncFixSentences = s_gpsPowerOnStartFixSentences;
+    s_lastGpsInfoSyncMs = 0;
+#endif
+    s_gpsInfoFirstSyncDoneSincePowerOn = false;
   }
   digitalWrite(PIN_GPS_POWER, on ? LOW : HIGH);
   digitalWrite(PIN_GPS_ENABLE, on ? HIGH : LOW);

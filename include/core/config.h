@@ -82,7 +82,7 @@
 // Averaging window (in PPS intervals) for ppm estimate smoothing.
 #define GPS_PPS_DISCIPLINE_WINDOW 16
 // Minimum spacing between automatic time sync commits in GPS Info mode.
-#define GPS_INFO_AUTO_SYNC_MIN_MS 3000
+#define GPS_INFO_AUTO_SYNC_MIN_MS 600000
 
 // ===== GPS Boot Control =====
 #define GPS_POWER_DEFAULT_ON 1
