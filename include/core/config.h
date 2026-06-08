@@ -78,7 +78,7 @@
 
 // ===== GPS PPS Discipline =====
 // Enable PPS-based crystal drift estimation while GPS is on (best in GPS Info mode).
-#define GPS_PPS_DISCIPLINE_ENABLED 1
+#define GPS_PPS_DISCIPLINE_ENABLED 0
 // Averaging window (in PPS intervals) for ppm estimate smoothing.
 #define GPS_PPS_DISCIPLINE_WINDOW 16
 // Minimum spacing between automatic time sync commits in GPS Info mode.

@@ -175,13 +175,8 @@ EditField_t timeEditGetCurrentField() {
 // ===== Flash Control for Visual Feedback =====
 bool timeEditShouldFlash() {
   if (!g_isEditing) return true;
-  
-  if (crystalTimeElapsedMs(g_flashToggleTime, FLASH_INTERVAL_MS)) {
-    g_showFlash = !g_showFlash;
-    g_flashToggleTime = crystalTimeGetMillis();
-  }
-  
-  return g_showFlash;
+
+  return timeFlashToggle(&g_flashToggleTime, &g_showFlash, FLASH_INTERVAL_MS);
 }
 
 // ===== Date Validation =====

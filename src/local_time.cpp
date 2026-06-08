@@ -152,11 +152,6 @@ OffsetEditState_t offsetEditGetState() {
 // ===== Flash Control for Visual Feedback =====
 bool offsetEditShouldFlash() {
   if (g_offsetEditState != OFFSET_EDIT_ACTIVE) return true;
-  
-  if (crystalTimeElapsedMs(g_offsetFlashToggleTime, OFFSET_FLASH_INTERVAL_MS)) {
-    g_offsetShowFlash = !g_offsetShowFlash;
-    g_offsetFlashToggleTime = crystalTimeGetMillis();
-  }
-  
-  return g_offsetShowFlash;
+
+  return timeFlashToggle(&g_offsetFlashToggleTime, &g_offsetShowFlash, OFFSET_FLASH_INTERVAL_MS);
 }
