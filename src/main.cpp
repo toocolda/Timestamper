@@ -441,6 +441,8 @@ const int8_t enc_table[16] = {
   0,  1, -1,  0
 };
 
+bool g_deskSleepEligible = false;
+
 // ===== Desk-Mode Sleep Control =====
 static volatile bool s_deskInputWake = false;
 static bool s_deskSleepArmed = false;
@@ -500,8 +502,15 @@ static void deskDisableWakePinChange() {
 }
 
 static bool deskSleepShouldRun() {
-  // Keep sleep restricted to desk mode, and avoid conflict with active timers/alarm tone.
-  return (g_currentMode == MODE_LOCAL_ONLY) && !timerAnyRunning() && !timerAnyAlarmActive();
+  bool noManualEdit = !timeEditIsActive() && !offsetEditIsActive() && !timerEditIsActive();
+  bool noTimerActivity = !timerAnyRunning() && !timerAnyAlarmActive();
+  bool noStopwatchActivity = !stopwatchAnyRunning();
+  bool gpsOff = !s_gpsPowerOn;
+
+  // Enter desk sleep only when all low-power conditions are satisfied.
+  g_deskSleepEligible =
+    (g_currentMode == MODE_LOCAL_ONLY) && gpsOff && noTimerActivity && noStopwatchActivity && noManualEdit;
+  return g_deskSleepEligible;
 }
 
 static void deskSleepResetState() {
