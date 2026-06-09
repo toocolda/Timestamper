@@ -518,8 +518,9 @@ static bool s_deskSleepArmed = false;
 static uint32_t s_deskEnterMs = 0;  // Crystal-ms when Timer2 sleep was first armed
 static uint32_t s_deskStayAwakeUntilMs = 0;
 static uint32_t s_deskLastDisplaySecond = 0xFFFFFFFFUL;
-static const uint32_t kDeskSleepDelayMs = 5000;  // Grace period before first sleep
+static const uint32_t kDeskSleepDelayMs = 1500;  // Grace period before first sleep
 static const uint32_t kDeskInputAwakeMs = 700;   // Keep loop awake after input wake for debounce/long-press
+static const uint32_t kDeskTimestampFeedbackAwakeMs = 2300;  // Let long-press feedback finish before sleeping
 
 static void adcSetEnabled(bool enabled) {
   if (enabled) {
@@ -928,6 +929,12 @@ void loop() {
   // Keep desk mode awake while user is actively pressing buttons.
   if (g_currentMode == MODE_LOCAL_ONLY && buttonEvent != BUTTON_NONE) {
     s_deskStayAwakeUntilMs = crystalTimeGetMillis() + kDeskInputAwakeMs;
+  }
+
+  // Timestamp capture feedback (buzzer + blink) is driven in the main loop.
+  // If we re-enter desk sleep immediately, that feedback appears interrupted.
+  if (g_currentMode == MODE_LOCAL_ONLY && buttonEvent == BUTTON_TOP_LONG) {
+    s_deskStayAwakeUntilMs = crystalTimeGetMillis() + kDeskTimestampFeedbackAwakeMs;
   }
   
   // Send button events to modes for handling

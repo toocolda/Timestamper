@@ -7,7 +7,9 @@
 // ===== Battery Configuration =====
 // Voltage divider: 100K (positive) + 100K (to GND) = 200K total
 // V_out = V_in * (100K / 200K) = V_in * 0.5
-static const uint16_t kBatteryUpdatePeriodMs = 1000;
+// Battery percentage changes slowly enough that 5 s updates are effectively
+// real-time to the user while cutting repeated ADC/reference wakeups in UTC mode.
+static const uint16_t kBatteryUpdatePeriodMs = 5000;
 
 struct BatteryCurvePoint {
   uint16_t mv;
