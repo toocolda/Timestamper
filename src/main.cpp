@@ -721,6 +721,25 @@ static void deskSleepMaybeRunOneCycle() {
   deskDisableWakePinChange();
 }
 
+static void nonDeskIdleSleepOneCycle() {
+  // In non-desk modes, run IDLE sleep between loop iterations.
+  // Timer0 interrupt (Arduino timebase) wakes every ~1ms, so UI and button
+  // responsiveness remain effectively unchanged while cutting busy-spin current.
+  if (deskSleepShouldRun()) {
+    return;
+  }
+
+  set_sleep_mode(SLEEP_MODE_IDLE);
+  sleep_enable();
+  noInterrupts();
+#if defined(BODS) && defined(BODSE)
+  sleep_bod_disable();
+#endif
+  interrupts();
+  sleep_cpu();
+  sleep_disable();
+}
+
 void handleEncoder() {
   uint8_t state = (digitalRead(ENC_A) << 1) | digitalRead(ENC_B);
   if (state != lastState) {
@@ -998,4 +1017,7 @@ void loop() {
 
   // In desk mode, sleep between 1 Hz async Timer2 wake-ups.
   deskSleepMaybeRunOneCycle();
+
+  // Outside desk deep-sleep conditions, avoid full-speed busy looping.
+  nonDeskIdleSleepOneCycle();
 }
