@@ -57,8 +57,15 @@ uint32_t crystalTimeGetTicks256(void) {
 
 uint32_t crystalTimeGetMillis(void) {
   uint32_t ticks256 = crystalTimeGetTicks256();
-  // Convert 1/256 s ticks to ms with truncation for monotonic timing.
-  return (ticks256 * 1000UL) / 256UL;
+  // Convert 1/256 s ticks to ms. Split whole-seconds from the fractional part
+  // so the intermediate product never overflows 32 bits prematurely.
+  // A naive (ticks256 * 1000) overflows uint32 at ticks256 ~= 4.29e6, i.e. only
+  // ~4.66 h of uptime, which would make millis() jump backwards and corrupt all
+  // (now - since) interval comparisons. This form only wraps cleanly at the
+  // normal 2^32 ms (~49.7 day) boundary, where the unsigned-diff trick holds.
+  uint32_t wholeSeconds = ticks256 >> 8;
+  uint32_t fracTicks = ticks256 & 0xFFUL;
+  return wholeSeconds * 1000UL + ((fracTicks * 1000UL) >> 8);
 }
 
 bool crystalTimeElapsedMs(uint32_t sinceMs, uint32_t intervalMs) {

@@ -42,7 +42,7 @@ static void ensureGpsCustomParsersInit() {
   s_gpsCustomInited = true;
 }
 
-static bool gpsTryGetAltitudeFeet(int16_t* altFeetOut) {
+static bool gpsTryGetAltitudeFeet(int32_t* altFeetOut) {
   if (altFeetOut == nullptr) return false;
 
   if (gps.altitude.isValid()) {
@@ -57,9 +57,10 @@ static bool gpsTryGetAltitudeFeet(int16_t* altFeetOut) {
     int32_t scaled = altMetersX10 * 3281L;
     scaled += (scaled >= 0) ? 5000L : -5000L;
     int32_t altFeet = scaled / 10000L;
-    if (altFeet < -999) altFeet = -999;
-    if (altFeet > 32767) altFeet = 32767;
-    *altFeetOut = (int16_t)altFeet;
+    // 5-char field shows up to 99999 ft (covers all aviation cruise levels).
+    if (altFeet < -9999) altFeet = -9999;
+    if (altFeet > 99999) altFeet = 99999;
+    *altFeetOut = altFeet;
     return true;
   }
   return false;
@@ -150,9 +151,15 @@ static char* appendUint4(char* out, uint16_t value) {
   return out + 4;
 }
 
-static void formatIntRightAligned5(char out[6], int16_t value) {
-  uint16_t magnitude = (value < 0) ? (uint16_t)(-value) : (uint16_t)value;
-  if (magnitude > 9999U) magnitude = 9999U;
+static void formatIntRightAligned5(char out[6], int32_t value) {
+  bool negative = (value < 0);
+  uint32_t magnitude = negative ? (uint32_t)(-value) : (uint32_t)value;
+  // Positive values can use all 5 columns; negatives reserve one for the sign.
+  if (negative) {
+    if (magnitude > 9999U) magnitude = 9999U;
+  } else if (magnitude > 99999U) {
+    magnitude = 99999U;
+  }
 
   out[0] = ' ';
   out[1] = ' ';
@@ -167,7 +174,7 @@ static void formatIntRightAligned5(char out[6], int16_t value) {
     magnitude /= 10U;
   } while (magnitude > 0U && index < 5U);
 
-  if (value < 0) {
+  if (negative) {
     out[index] = '-';
   }
 }
@@ -1227,7 +1234,7 @@ void displayModeGpsInfo() {
   if (sat < 0) sat = 0;
   if (sat > 99) sat = 99;
   char gpsStatus[3];
-  int16_t altFeet = 0;
+  int32_t altFeet = 0;
   bool altValid = gpsTryGetAltitudeFeet(&altFeet);
   bool has3d = altValid && gps.location.isValid() && (sat >= 4);
   buildGpsStatus(gpsStatus, timeReliable, sat, has3d);
