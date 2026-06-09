@@ -231,12 +231,52 @@ static void gpsInfoPpsDisciplineAndAutoSyncUpdate() {
 static uint8_t s_gpsCfgAttempts = 0;
 static uint32_t s_gpsCfgNextAttemptMs = 1000;
 
+static void spiSetEnabled(bool enabled) {
+#if POWER_GATE_SPI_UNUSED
+#if defined(PRR)
+#if defined(PRSPI)
+  if (enabled) PRR &= (uint8_t)~_BV(PRSPI);
+  else PRR |= _BV(PRSPI);
+#endif
+#elif defined(PRR0)
+#if defined(PRSPI0)
+  if (enabled) PRR0 &= (uint8_t)~_BV(PRSPI0);
+  else PRR0 |= _BV(PRSPI0);
+#elif defined(PRSPI)
+  if (enabled) PRR0 &= (uint8_t)~_BV(PRSPI);
+  else PRR0 |= _BV(PRSPI);
+#endif
+#endif
+#else
+  (void)enabled;
+#endif
+}
+
+static void usart0SetEnabled(bool enabled) {
+#if POWER_GATE_USART0_WITH_GPS
+#if defined(PRR)
+#if defined(PRUSART0)
+  if (enabled) PRR &= (uint8_t)~_BV(PRUSART0);
+  else PRR |= _BV(PRUSART0);
+#endif
+#elif defined(PRR0)
+#if defined(PRUSART0)
+  if (enabled) PRR0 &= (uint8_t)~_BV(PRUSART0);
+  else PRR0 |= _BV(PRUSART0);
+#endif
+#endif
+#else
+  (void)enabled;
+#endif
+}
+
 static void gpsSetUartEnabled(bool enabled) {
 #if GPS_UART_ENABLED
   static bool s_uartEnabled = false;
   if (enabled == s_uartEnabled) return;
 
   if (enabled) {
+    usart0SetEnabled(true);
     Serial.begin(GPS_BAUD);
   } else {
     // GPS is power-gated in desk mode; keep UART pins high-Z so TXD does not
@@ -244,6 +284,7 @@ static void gpsSetUartEnabled(bool enabled) {
     Serial.end();
     pinMode(0, INPUT);
     pinMode(1, INPUT);
+    usart0SetEnabled(false);
   }
 
   s_uartEnabled = enabled;
@@ -777,6 +818,7 @@ void setup() {
 
 #if GPS_UART_ENABLED
   // GPS UART is dynamically enabled only while the GPS module is powered.
+  usart0SetEnabled(false);
   pinMode(0, INPUT);
   pinMode(1, INPUT);
 #else
@@ -805,6 +847,8 @@ void setup() {
   pinMode(PIN_GPS_PPS, INPUT_PULLUP);
 #endif
   gpsSetPower(false);
+
+  spiSetEnabled(false);
 
   // Datasheet §13.10.6 / "Minimizing Power Consumption": any digital input left
   // floating near VCC/2 keeps its input buffer in the linear region and draws

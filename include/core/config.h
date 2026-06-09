@@ -88,6 +88,14 @@
 #define GPS_POWER_DEFAULT_ON 1
 #define GPS_ENABLE_DEFAULT_ON 1
 
+// ===== Active-Mode Power Gating =====
+// Gate otherwise-idle peripherals during normal operation to cut active-mode
+// current without changing UI behavior.
+#define POWER_GATE_SPI_UNUSED 1
+#define POWER_GATE_USART0_WITH_GPS 1
+#define POWER_GATE_TWI_BETWEEN_LCD_WRITES 1
+#define POWER_GATE_TIMER1_WITH_BUZZER 1
+
 // ===== Encoder Quadrature =====
 #define ENC_DIVISOR 2  // Count per half-step
 

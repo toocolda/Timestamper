@@ -1,8 +1,27 @@
 #include <Arduino.h>
+#include <avr/io.h>
 #include "hardware/buzzer.h"
 
 static uint8_t s_buzzerPin = 255;
 static const uint8_t kBuzzerDutyPercent = 18;
+
+static void buzzerSetTimer1Enabled(bool enabled) {
+#if POWER_GATE_TIMER1_WITH_BUZZER
+#if defined(PRR)
+#if defined(PRTIM1)
+  if (enabled) PRR &= (uint8_t)~_BV(PRTIM1);
+  else PRR |= _BV(PRTIM1);
+#endif
+#elif defined(PRR0)
+#if defined(PRTIM1)
+  if (enabled) PRR0 &= (uint8_t)~_BV(PRTIM1);
+  else PRR0 |= _BV(PRTIM1);
+#endif
+#endif
+#else
+  (void)enabled;
+#endif
+}
 
 static uint16_t computeTop(uint16_t frequencyHz, uint16_t prescaler) {
   if (frequencyHz == 0 || prescaler == 0) return 0xFFFF;
@@ -34,6 +53,8 @@ void buzzerStartWithDuty(uint16_t frequencyHz, uint8_t dutyPercent) {
     buzzerStop();
     return;
   }
+
+  buzzerSetTimer1Enabled(true);
 
   if (dutyPercent < 1U) dutyPercent = 1U;
   if (dutyPercent > 95U) dutyPercent = 95U;
@@ -79,6 +100,8 @@ void buzzerStop(void) {
   TCCR1A = 0;
   TCCR1B = 0;
   interrupts();
+
+  buzzerSetTimer1Enabled(false);
 
   if (s_buzzerPin != 255) {
     digitalWrite(s_buzzerPin, LOW);
