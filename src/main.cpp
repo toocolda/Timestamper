@@ -36,6 +36,7 @@ enum GpsSyncState : uint8_t {
 };
 
 static bool s_gpsPowerOn = false;
+static bool s_gpsPowerPinsInitialized = false;
 static uint32_t s_gpsPowerOnStartFixSentences = 0;
 static uint32_t s_gpsInfoPowerHoldUntilMs = 0;
 static GpsSyncState s_gpsSyncState = GPS_SYNC_IDLE;
@@ -230,11 +231,33 @@ static void gpsInfoPpsDisciplineAndAutoSyncUpdate() {
 static uint8_t s_gpsCfgAttempts = 0;
 static uint32_t s_gpsCfgNextAttemptMs = 1000;
 
+static void gpsSetUartEnabled(bool enabled) {
+#if GPS_UART_ENABLED
+  static bool s_uartEnabled = false;
+  if (enabled == s_uartEnabled) return;
+
+  if (enabled) {
+    Serial.begin(GPS_BAUD);
+  } else {
+    // GPS is power-gated in desk mode; keep UART pins high-Z so TXD does not
+    // source current into an unpowered GPS module through IO protection paths.
+    Serial.end();
+    pinMode(0, INPUT);
+    pinMode(1, INPUT);
+  }
+
+  s_uartEnabled = enabled;
+#else
+  (void)enabled;
+#endif
+}
+
 static void gpsSetPower(bool on) {
-  if (on == s_gpsPowerOn) return;
+  bool stateChanged = (on != s_gpsPowerOn);
+  if (!stateChanged && s_gpsPowerPinsInitialized) return;
 
   s_gpsPowerOn = on;
-  if (on) {
+  if (on && stateChanged) {
     s_gpsPowerOnStartFixSentences = gps.sentencesWithFix();
 #if GPS_PPS_DISCIPLINE_ENABLED
     s_lastGpsInfoSyncFixSentences = s_gpsPowerOnStartFixSentences;
@@ -242,12 +265,18 @@ static void gpsSetPower(bool on) {
 #endif
     s_gpsInfoFirstSyncDoneSincePowerOn = false;
   }
+
   digitalWrite(PIN_GPS_POWER, on ? LOW : HIGH);
   digitalWrite(PIN_GPS_ENABLE, on ? HIGH : LOW);
+  gpsSetUartEnabled(on);
+
+  s_gpsPowerPinsInitialized = true;
 
   // Re-run output config sequence on each power-up.
-  s_gpsCfgAttempts = 0;
-  s_gpsCfgNextAttemptMs = crystalTimeGetMillis() + 1000;
+  if (stateChanged || on) {
+    s_gpsCfgAttempts = 0;
+    s_gpsCfgNextAttemptMs = crystalTimeGetMillis() + 1000;
+  }
 }
 
 void gpsSyncRequest(void) {
@@ -728,7 +757,9 @@ void setup() {
   crystalTimeInit();
 
 #if GPS_UART_ENABLED
-  Serial.begin(GPS_BAUD);
+  // GPS UART is dynamically enabled only while the GPS module is powered.
+  pinMode(0, INPUT);
+  pinMode(1, INPUT);
 #else
   Serial.end();
   pinMode(0, INPUT);
@@ -755,6 +786,25 @@ void setup() {
   pinMode(PIN_GPS_PPS, INPUT_PULLUP);
 #endif
   gpsSetPower(false);
+
+  // Datasheet §13.10.6 / "Minimizing Power Consumption": any digital input left
+  // floating near VCC/2 keeps its input buffer in the linear region and draws
+  // shoot-through current. Across several pins this can total ~1 mA, which shows
+  // up directly as excess PWR_SAVE (desk-mode) current. Tie every otherwise
+  // unused pin to a defined level via the internal pull-ups.
+  //
+  // PB3/PB4/PB5 = SPI MOSI/MISO/SCK: only wired to the ISP header, unused at
+  // runtime (the LCD is on I2C). PB6/PB7 are the 32.768 kHz TOSC crystal and
+  // must NOT be touched.
+  DDRB  &= (uint8_t)~(_BV(3) | _BV(4) | _BV(5));
+  PORTB |= (uint8_t)(_BV(PORTB3) | _BV(PORTB4) | _BV(PORTB5));
+#if defined(PORTE)
+  // PE2/PE3 = unused ATmega328PB Port-E pins (PE0/PE1 are the encoder).
+  DDRE  &= (uint8_t)~(_BV(2) | _BV(3));
+  PORTE |= (uint8_t)(_BV(PORTE2) | _BV(PORTE3));
+#endif
+  // Keep PD0/PD1 untouched here. They are managed by gpsSetUartEnabled():
+  // high-Z when GPS power is off, UART-owned when GPS is on.
 
   buzzerInit(PIN_BUZZER);
   backlightInit(PIN_BACKLIGHT_BLUE, PIN_BACKLIGHT_RED, PIN_BACKLIGHT_GREEN);
