@@ -3,6 +3,7 @@
 #include <TinyGPS++.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
+#include <avr/wdt.h>
 #include "display/st7036.h"
 #include "core/config.h"
 #include "core/modes.h"
@@ -708,6 +709,11 @@ void handleEncoder() {
 
 // ===== Setup =====
 void setup() {
+  // Datasheet §13.10.5 (Watchdog Timer): make sure the WDT is off after reset so
+  // it can neither add running current nor reset us out of desk-mode power-save.
+  MCUSR &= (uint8_t)~_BV(WDRF);
+  wdt_disable();
+
   // Hardware-reset the LCD (active-low) on PB2 before I2C init commands.
   pinMode(PIN_LCD_RESET, OUTPUT);
   digitalWrite(PIN_LCD_RESET, HIGH);
@@ -742,6 +748,11 @@ void setup() {
 #if GPS_PPS_DISCIPLINE_ENABLED
   pinMode(PIN_GPS_PPS, INPUT);
   attachInterrupt(digitalPinToInterrupt(PIN_GPS_PPS), gpsPpsIsr, RISING);
+#else
+  // Datasheet §13.10.6 (Port Pins): when PPS discipline is disabled this pin is
+  // otherwise never configured, leaving a floating CMOS input. A floating input
+  // near VCC/2 makes the digital input buffer draw excess current, so pull it up.
+  pinMode(PIN_GPS_PPS, INPUT_PULLUP);
 #endif
   gpsSetPower(false);
 
