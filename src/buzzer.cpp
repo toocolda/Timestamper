@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <avr/io.h>
+#include <avr/interrupt.h>
 #include "hardware/buzzer.h"
 
 static uint8_t s_buzzerPin = 255;
@@ -23,18 +24,30 @@ static void buzzerSetTimer1Enabled(bool enabled) {
 #endif
 }
 
+// Timer1 CTC mode: f = F_CPU / (prescaler * (OCR1A + 1))
+// Returns OCR1A value for the desired frequency.
 static uint16_t computeTop(uint16_t frequencyHz, uint16_t prescaler) {
   if (frequencyHz == 0 || prescaler == 0) return 0xFFFF;
 
-  // Timer1 phase/frequency-correct PWM: f = F_CPU / (2 * prescaler * TOP)
-  uint32_t denom = 2UL * (uint32_t)prescaler * (uint32_t)frequencyHz;
-  if (denom == 0) return 0xFFFF;
-
+  uint32_t denom = (uint32_t)prescaler * (uint32_t)frequencyHz;
+  // Round to nearest, then subtract 1 for OCR1A register value.
   uint32_t top = (F_CPU + (denom / 2UL)) / denom;
   if (top < 2UL) top = 2UL;
+  top -= 1UL;  // OCR1A = F_CPU/(prescaler*freq) - 1
 
   if (top > 0xFFFFUL) return 0xFFFF;
   return (uint16_t)top;
+}
+
+// Timer1 CTC ISRs: software-toggle the buzzer pin on PD7 (no hardware PWM output).
+// COMPA fires when the counter resets (start of new period) → pin HIGH.
+// COMPB fires at the duty-cycle cutoff → pin LOW.
+ISR(TIMER1_COMPA_vect) {
+  if (s_buzzerPin != 255) digitalWrite(s_buzzerPin, HIGH);
+}
+
+ISR(TIMER1_COMPB_vect) {
+  if (s_buzzerPin != 255) digitalWrite(s_buzzerPin, LOW);
 }
 
 void buzzerInit(uint8_t pin) {
@@ -62,41 +75,43 @@ void buzzerStartWithDuty(uint16_t frequencyHz, uint8_t dutyPercent) {
   uint8_t csBits = 0;
   uint16_t top = computeTop(frequencyHz, 1);
 
-  if (top <= 0xFFFF) {
+  if (top < 0xFFFF) {
     csBits = _BV(CS10);
   }
-  if (top > 0xFFFF - 1) {
+  if (top >= 0xFFFF) {
     top = computeTop(frequencyHz, 8);
     csBits = _BV(CS11);
   }
-  if (top > 0xFFFF - 1) {
+  if (top >= 0xFFFF) {
     top = computeTop(frequencyHz, 64);
     csBits = _BV(CS11) | _BV(CS10);
   }
-  if (top > 0xFFFF - 1) {
+  if (top >= 0xFFFF) {
     top = computeTop(frequencyHz, 256);
     csBits = _BV(CS12);
   }
-  if (top > 0xFFFF - 1) {
+  if (top >= 0xFFFF) {
     top = computeTop(frequencyHz, 1024);
     csBits = _BV(CS12) | _BV(CS10);
   }
 
   uint32_t compare = ((uint32_t)top * (uint32_t)dutyPercent) / 100UL;
   if (compare < 1UL) compare = 1UL;
-  if (compare >= top) compare = (uint32_t)top - 1UL;
+  if (compare >= (uint32_t)top) compare = (uint32_t)top - 1UL;
 
   noInterrupts();
-  // Phase/frequency-correct PWM (mode 8), TOP=ICR1, output on OC1A.
-  TCCR1A = _BV(COM1A1);
-  TCCR1B = _BV(WGM13) | csBits;
-  ICR1 = top;
-  OCR1A = (uint16_t)compare;
+  // CTC mode (WGM12), no hardware PWM outputs — pin toggled in ISRs above.
+  TCCR1A = 0;
+  TCCR1B = _BV(WGM12) | csBits;
+  OCR1A = top;
+  OCR1B = (uint16_t)compare;
+  TIMSK1 = _BV(OCIE1A) | _BV(OCIE1B);
   interrupts();
 }
 
 void buzzerStop(void) {
   noInterrupts();
+  TIMSK1 = 0;
   TCCR1A = 0;
   TCCR1B = 0;
   interrupts();

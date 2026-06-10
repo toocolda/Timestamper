@@ -28,6 +28,16 @@ static ButtonState buttons[4] = {
   {BTN_T, false, 0, false}
 };
 
+static bool isButtonPressed(int index) {
+  bool levelHigh = (digitalRead(buttons[index].pin) == HIGH);
+  if (index == 3) {
+    // Top button is NC on v0.2: pressed state is electrically inverted.
+    return levelHigh;
+  }
+  // Other buttons are NO with INPUT_PULLUP.
+  return !levelHigh;
+}
+
 // ===== Initialize Buttons =====
 void initButtons() {
   // Pins are already set to INPUT_PULLUP in main.cpp setup
@@ -46,7 +56,7 @@ ButtonEvent_t handleButtons() {
   }
   
   for (int i = 0; i < 4; i++) {
-    bool isPressed = !digitalRead(buttons[i].pin);  // Pins are pulled up, so pressed = LOW
+    bool isPressed = isButtonPressed(i);
     
     // Transition from not pressed to pressed
     if (isPressed && !buttons[i].lastPressed) {

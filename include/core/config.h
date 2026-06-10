@@ -43,21 +43,21 @@
 
 // ===== GPIO Pin Assignments =====
 // Encoder & buttons
-#define PIN_ENC_A PIN_PE0
-#define PIN_ENC_B PIN_PE1
+#define PIN_ENC_A PIN_PE1
+#define PIN_ENC_B PIN_PE0
 #define PIN_ENC_BTN PIN_PD4
-#define PIN_BTN_LEFT PIN_PD5
-#define PIN_BTN_RIGHT PIN_PD6
+#define PIN_BTN_LEFT PIN_PD6
+#define PIN_BTN_RIGHT PIN_PD5
 #define PIN_BTN_TOP PIN_PD3
 
 // Outputs
-#define PIN_GPS_POWER PIN_PB0    // Active LOW (AO3407 high-side GPS power)
-#define PIN_BUZZER PIN_PB1
-#define PIN_LCD_RESET PIN_PB2
-#define PIN_BACKLIGHT_RED PIN_PC1
-#define PIN_BACKLIGHT_GREEN PIN_PC2
-#define PIN_BACKLIGHT_BLUE PIN_PC3
-#define PIN_GPS_ENABLE PIN_PD7   // GPS module EN pin
+#define PIN_GPS_POWER PIN_PC1    // Active LOW (AO3407 high-side GPS power)
+#define PIN_BUZZER PIN_PD7
+#define PIN_LCD_RESET PIN_PC3
+#define PIN_BACKLIGHT_RED PIN_PB2
+#define PIN_BACKLIGHT_GREEN PIN_PB1
+#define PIN_BACKLIGHT_BLUE PIN_PB0
+#define PIN_GPS_ENABLE PIN_PC2   // GPS module EN pin
 #define PIN_GPS_PPS PIN_PD2
 
 // ===== ADC Pin Assignments =====
