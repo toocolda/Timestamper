@@ -649,14 +649,6 @@ static void deskSleepMaybeRunOneCycle() {
     return;
   }
 
-  uint32_t nowSecond = crystalTimeGetSeconds();
-  if (nowSecond != s_deskLastDisplaySecond) {
-    s_deskLastDisplaySecond = nowSecond;
-    // Do NOT increment g_modeEpoch — that would clear the LCD every second.
-    // displayModeLocalOnly() has its own signature cache and only writes changed content.
-    updateDisplay(g_currentMode);
-  }
-
   set_sleep_mode(SLEEP_MODE_PWR_SAVE);
   sleep_enable();
 
@@ -761,6 +753,21 @@ static void deskSleepMaybeRunOneCycle() {
 
   // Disable pin-change wake sources immediately after wakeup so they don't fire outside sleep.
   deskDisableWakePinChange();
+
+  // Check second after waking (race-free: Timer2 ISR has already run and
+  // incremented s_crystalSeconds before we reach here). Doing this check
+  // before sleep_cpu() had a race: if Timer2 fired between the check and
+  // sleep_cpu(), the ISR consumed the overflow flag and the MCU slept until
+  // the NEXT second, causing a 2-second display gap.
+  {
+    uint32_t nowSecond = crystalTimeGetSeconds();
+    if (nowSecond != s_deskLastDisplaySecond) {
+      s_deskLastDisplaySecond = nowSecond;
+      // Do NOT increment g_modeEpoch — that would clear the LCD every second.
+      // displayModeLocalOnly() has its own signature cache and only writes changed content.
+      updateDisplay(g_currentMode);
+    }
+  }
 }
 
 static void nonDeskIdleSleepOneCycle() {

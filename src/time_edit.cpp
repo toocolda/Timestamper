@@ -13,7 +13,7 @@ static uint32_t g_lastInputTime = 0;
 static uint32_t g_flashToggleTime = 0;
 static bool g_showFlash = true;
 
-#define INACTIVITY_TIMEOUT_MS 10000
+#define INACTIVITY_TIMEOUT_MS 30000
 #define FLASH_INTERVAL_MS 300
 
 // ===== Start Time Edit Mode =====

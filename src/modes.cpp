@@ -24,7 +24,7 @@
 // - Owns button event routing for mode-specific behavior
 
 // Firmware version
-static const char kFirmwareVersion[] = "v0.0.1  20260602";
+static const char kFirmwareVersion[] = "v0.0.2  20260615";
 
 // Forward declarations from main.cpp
 extern ST7036 lcd;
@@ -320,7 +320,7 @@ static void formatTimestampEmptySelectedLine(char out[LCD_BUF_SIZE], char marker
   out[15] = ':';
   out[16] = '-';
   out[17] = '-';
-  out[18] = 'Z';
+  out[18] = ' ';
   out[19] = ' ';
   out[20] = '\0';
 }
@@ -1333,7 +1333,7 @@ void displayModeGpsInfo() {
 
   lcd.setCursor(0, 1);
   char line2[LCD_BUF_SIZE];
-  memcpy(line2, "HDG:", 4);
+  memcpy(line2, "TRK:", 4);
   memcpy(&line2[4], hdgStr, 3);
   line2[7] = ' ';
   memcpy(&line2[8], hdgCard, 3);
