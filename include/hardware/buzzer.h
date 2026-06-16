@@ -6,4 +6,5 @@
 // Keeps Timer2 free for asynchronous 32.768 kHz crystal timekeeping.
 void buzzerInit(uint8_t pin);
 void buzzerStart(uint16_t frequencyHz);
+void buzzerStartWithDuty(uint16_t frequencyHz, uint8_t dutyPercent);
 void buzzerStop(void);

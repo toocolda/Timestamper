@@ -1,12 +1,16 @@
 #include <Arduino.h>
 #include <TinyGPS++.h>
+#include <avr/pgmspace.h>
 
 #include "hardware/backlight.h"
 #include "hardware/battery.h"
 #include "hardware/buttons.h"
+#include "core/modes.h"
 #include "core/config.h"
 #include "time/local_time.h"
 #include "time/mcu_time.h"
+#include "time/time_utils.h"
+#include "time/crystal_time.h"
 #include "display/st7036.h"
 #include "features/stopwatch.h"
 #include "time/time_edit.h"
@@ -19,60 +23,491 @@
 // - Uses per-mode cache signatures to minimize LCD writes
 // - Owns button event routing for mode-specific behavior
 
+// Firmware version
+static const char kFirmwareVersion[] = "v0.0.2  20260615";
+
 // Forward declarations from main.cpp
 extern ST7036 lcd;
 extern TinyGPSPlus gps;
+
+// In GSA, PDOP is field 15 (mode1, mode2, 12 PRN slots, then PDOP).
+static TinyGPSCustom s_gpgsaPdop;
+static TinyGPSCustom s_bdgsaPdop;
+static bool s_gpsCustomInited = false;
+
+static void ensureGpsCustomParsersInit() {
+  if (s_gpsCustomInited) return;
+  s_gpgsaPdop.begin(gps, "GPGSA", 15);
+  s_bdgsaPdop.begin(gps, "BDGSA", 15);
+  s_gpsCustomInited = true;
+}
+
+static bool gpsTryGetAltitudeFeet(int32_t* altFeetOut) {
+  if (altFeetOut == nullptr) return false;
+
+  if (gps.altitude.isValid()) {
+    // TinyGPS++ altitude.value() is meters * 100.
+    int32_t altMetersX100 = gps.altitude.value();
+    // Use meters*10 with 3281/10000 scale to keep 32-bit math and improve
+    // precision vs the prior 328/10000 approximation.
+    int32_t altMetersX10 = altMetersX100 / 10L;
+    // Keep multiply in signed 32-bit: 650000 * 3281 ~= 2.13e9.
+    if (altMetersX10 > 650000L) altMetersX10 = 650000L;
+    if (altMetersX10 < -650000L) altMetersX10 = -650000L;
+    int32_t scaled = altMetersX10 * 3281L;
+    scaled += (scaled >= 0) ? 5000L : -5000L;
+    int32_t altFeet = scaled / 10000L;
+    // 5-char field shows up to 99999 ft (covers all aviation cruise levels).
+    if (altFeet < -9999) altFeet = -9999;
+    if (altFeet > 99999) altFeet = 99999;
+    *altFeetOut = altFeet;
+    return true;
+  }
+  return false;
+}
+
+static bool parseDecimalTenths(const char* text, uint16_t* outX10) {
+  if (text == nullptr || outX10 == nullptr) return false;
+
+  uint16_t whole = 0;
+  uint8_t frac = 0;
+  bool seenDigit = false;
+  bool seenDot = false;
+  bool fracSet = false;
+
+  for (const char* p = text; *p != '\0'; ++p) {
+    char c = *p;
+    if (c >= '0' && c <= '9') {
+      seenDigit = true;
+      if (!seenDot) {
+        whole = (uint16_t)(whole * 10U + (uint16_t)(c - '0'));
+        if (whole > 999U) whole = 999U;
+      } else if (!fracSet) {
+        frac = (uint8_t)(c - '0');
+        fracSet = true;
+      }
+    } else if (c == '.' && !seenDot) {
+      seenDot = true;
+    } else {
+      break;
+    }
+  }
+
+  if (!seenDigit) return false;
+  uint16_t v = (uint16_t)(whole * 10U + (uint16_t)frac);
+  if (v > 999U) v = 999U;
+  *outX10 = v;
+  return true;
+}
+
+static void formatUint2(char out[3], uint8_t value) {
+  out[0] = (char)('0' + (value / 10U));
+  out[1] = (char)('0' + (value % 10U));
+  out[2] = '\0';
+}
+
+static void formatUint4(char out[5], uint16_t value) {
+  out[0] = (char)('0' + ((value / 1000U) % 10U));
+  out[1] = (char)('0' + ((value / 100U) % 10U));
+  out[2] = (char)('0' + ((value / 10U) % 10U));
+  out[3] = (char)('0' + (value % 10U));
+  out[4] = '\0';
+}
+
+static void formatUint3(char out[4], uint16_t value) {
+  if (value > 999U) value = 999U;
+  out[0] = (char)('0' + (value / 100U));
+  out[1] = (char)('0' + ((value / 10U) % 10U));
+  out[2] = (char)('0' + (value % 10U));
+  out[3] = '\0';
+}
+
+static char* appendText(char* out, const char* text) {
+  while (*text != '\0') {
+    *out++ = *text++;
+  }
+  return out;
+}
+
+static char* appendUint2(char* out, uint8_t value) {
+  out[0] = (char)('0' + (value / 10U));
+  out[1] = (char)('0' + (value % 10U));
+  return out + 2;
+}
+
+static char* appendUint3(char* out, uint16_t value) {
+  if (value > 999U) value = 999U;
+  out[0] = (char)('0' + (value / 100U));
+  out[1] = (char)('0' + ((value / 10U) % 10U));
+  out[2] = (char)('0' + (value % 10U));
+  return out + 3;
+}
+
+static char* appendUint4(char* out, uint16_t value) {
+  out[0] = (char)('0' + ((value / 1000U) % 10U));
+  out[1] = (char)('0' + ((value / 100U) % 10U));
+  out[2] = (char)('0' + ((value / 10U) % 10U));
+  out[3] = (char)('0' + (value % 10U));
+  return out + 4;
+}
+
+static void formatIntRightAligned5(char out[6], int32_t value) {
+  bool negative = (value < 0);
+  uint32_t magnitude = negative ? (uint32_t)(-value) : (uint32_t)value;
+  // Positive values can use all 5 columns; negatives reserve one for the sign.
+  if (negative) {
+    if (magnitude > 9999U) magnitude = 9999U;
+  } else if (magnitude > 99999U) {
+    magnitude = 99999U;
+  }
+
+  out[0] = ' ';
+  out[1] = ' ';
+  out[2] = ' ';
+  out[3] = ' ';
+  out[4] = ' ';
+  out[5] = '\0';
+
+  uint8_t index = 4;
+  do {
+    out[index--] = (char)('0' + (magnitude % 10U));
+    magnitude /= 10U;
+  } while (magnitude > 0U && index < 5U);
+
+  if (negative) {
+    out[index] = '-';
+  }
+}
+
+static void buildUtcDateTimeLine(char out[LCD_BUF_SIZE], const TimeEdit_t* t) {
+  char* p = out;
+  p = appendUint4(p, t->year);
+  *p++ = '-';
+  p = appendUint2(p, t->month);
+  *p++ = '-';
+  p = appendUint2(p, t->day);
+  *p++ = ' ';
+  p = appendUint2(p, t->hour);
+  *p++ = ':';
+  p = appendUint2(p, t->minute);
+  *p++ = ':';
+  p = appendUint2(p, t->second);
+  *p++ = 'Z';
+  *p = '\0';
+}
+
+static void buildUtcEditLine(char out[LCD_BUF_SIZE],
+                             const char yearStr[5],
+                             const char monthStr[3],
+                             const char dayStr[3],
+                             const char hourStr[3],
+                             const char minuteStr[3],
+                             const char secondStr[3]) {
+  char* p = out;
+  p = appendText(p, yearStr);
+  *p++ = '-';
+  p = appendText(p, monthStr);
+  *p++ = '-';
+  p = appendText(p, dayStr);
+  *p++ = ' ';
+  p = appendText(p, hourStr);
+  *p++ = ':';
+  p = appendText(p, minuteStr);
+  *p++ = ':';
+  p = appendText(p, secondStr);
+  *p++ = 'Z';
+  *p = '\0';
+}
+
+static void buildUtcEditStatusLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "EDIT UTC      BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void buildUtcFirmwareLine(char out[LCD_BUF_SIZE]) {
+  char* p = out;
+  p = appendText(p, "FW: ");
+  p = appendText(p, kFirmwareVersion);
+  *p = '\0';
+}
+
+static void buildUtcSyncSearchLine(char out[LCD_BUF_SIZE], uint16_t remaining, uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "SYNC SRCH ");
+  p = appendUint3(p, remaining);
+  p = appendText(p, " BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void buildUtcSyncOkLine(char out[LCD_BUF_SIZE], uint16_t syncAge, uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "SYNC OK  ");
+  p = appendUint3(p, syncAge);
+  *p++ = 's';
+  p = appendText(p, " BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void buildUtcSyncTimeoutLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "SYNC TMO TRY  BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void buildUtcSyncNoneLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
+  char* p = out;
+  p = appendText(p, "SYNC NO       BAT:");
+  p = appendUint2(p, batteryPercent);
+  *p = '\0';
+}
+
+static void formatUtcOffset3(char out[4], int8_t offset, bool blank) {
+  if (blank) {
+    out[0] = ' ';
+    out[1] = ' ';
+    out[2] = ' ';
+    out[3] = '\0';
+    return;
+  }
+
+  int8_t absOffset = (offset < 0) ? (int8_t)(-offset) : offset;
+  if (absOffset > 99) absOffset = 99;
+  out[0] = (offset < 0) ? '-' : '+';
+  out[1] = (char)('0' + (absOffset / 10));
+  out[2] = (char)('0' + (absOffset % 10));
+  out[3] = '\0';
+}
+
+static void formatMmDdHhMmSsTail3(char out[LCD_BUF_SIZE], const TimeEdit_t* t, const char tail3[4]) {
+  out[0] = ' ';
+  formatUint2(&out[1], t->month);
+  out[3] = '-';
+  formatUint2(&out[4], t->day);
+  out[6] = ' ';
+  formatUint2(&out[7], t->hour);
+  out[9] = ':';
+  formatUint2(&out[10], t->minute);
+  out[12] = ':';
+  formatUint2(&out[13], t->second);
+  out[15] = ' ';
+  out[16] = tail3[0];
+  out[17] = tail3[1];
+  out[18] = tail3[2];
+  out[19] = '\0';
+}
+
+static void formatTimestampEmptySelectedLine(char out[LCD_BUF_SIZE], char marker) {
+  out[0] = marker;
+  out[1] = '0';
+  out[2] = '0';
+  out[3] = ' ';
+  out[4] = '-';
+  out[5] = '-';
+  out[6] = ' ';
+  out[7] = '-';
+  out[8] = '-';
+  out[9] = ' ';
+  out[10] = '-';
+  out[11] = '-';
+  out[12] = ':';
+  out[13] = '-';
+  out[14] = '-';
+  out[15] = ':';
+  out[16] = '-';
+  out[17] = '-';
+  out[18] = ' ';
+  out[19] = ' ';
+  out[20] = '\0';
+}
+
+static void formatTimestampEmptySecondLine(char out[LCD_BUF_SIZE], char tzSuffix, char navArrow) {
+  out[0] = ' ';
+  out[1] = '0';
+  out[2] = '0';
+  out[3] = ' ';
+  out[4] = '-';
+  out[5] = '-';
+  out[6] = ' ';
+  out[7] = '-';
+  out[8] = '-';
+  out[9] = ' ';
+  out[10] = '-';
+  out[11] = '-';
+  out[12] = ':';
+  out[13] = '-';
+  out[14] = '-';
+  out[15] = ':';
+  out[16] = '-';
+  out[17] = '-';
+  out[18] = tzSuffix;
+  out[19] = navArrow;
+  out[20] = '\0';
+}
+
+static bool gpsTryGetPdopX10(uint16_t* pdopX10Out) {
+  if (pdopX10Out == nullptr) return false;
+  ensureGpsCustomParsersInit();
+
+  const char* rawPdop = nullptr;
+  if (s_gpgsaPdop.isValid() && s_gpgsaPdop.value()[0] != '\0') {
+    rawPdop = s_gpgsaPdop.value();
+  } else if (s_bdgsaPdop.isValid() && s_bdgsaPdop.value()[0] != '\0') {
+    rawPdop = s_bdgsaPdop.value();
+  }
+  if (rawPdop == nullptr) return false;
+  return parseDecimalTenths(rawPdop, pdopX10Out);
+}
 
 // ===== Global Mode Variables =====
 uint8_t g_currentMode = MODE_UTC_ONLY;
 uint32_t g_modeEpoch = 1;  // Start at 1 so first display triggers a clear and resets all caches
 
 // ===== Buzzer Control =====
-void buzzOnce(uint16_t durationMs) {
-  buzzerStart(1000);  // 1000 Hz tone
-  delay(durationMs);
+enum BuzzerCue : uint8_t {
+  BUZZ_CUE_NONE = 0,
+  BUZZ_CUE_SINGLE,
+  BUZZ_CUE_TIMESTAMP
+};
+
+static BuzzerCue s_buzzerCue = BUZZ_CUE_NONE;
+static uint8_t s_buzzerCueStep = 0;
+static uint16_t s_buzzerCueSingleMs = 0;
+static uint32_t s_buzzerCueStepStartedMs = 0;
+
+static const uint16_t kModeSwitchToneHz = 659;
+static const uint8_t kModeSwitchDutyPercent = 6;
+static const uint16_t kControlStartStopToneHz = 988;
+static const uint16_t kControlResetEditToneHz = 740;
+static const uint8_t kControlDutyPercent = 7;
+static const uint16_t kTimestampToneAHz = 784;
+static const uint16_t kTimestampToneBHz = 988;
+static const uint8_t kTimestampDutyPercent = 7;
+
+static void buzzerCueStop() {
   buzzerStop();
+  s_buzzerCue = BUZZ_CUE_NONE;
+  s_buzzerCueStep = 0;
+  s_buzzerCueSingleMs = 0;
+  s_buzzerCueStepStartedMs = 0;
+}
+
+static void buzzSingle(uint16_t durationMs, uint16_t frequencyHz, uint8_t dutyPercent) {
+  if (timerAnyAlarmActive()) return;
+  s_buzzerCue = BUZZ_CUE_SINGLE;
+  s_buzzerCueStep = 0;
+  s_buzzerCueSingleMs = durationMs;
+  s_buzzerCueStepStartedMs = crystalTimeGetMillis();
+  buzzerStartWithDuty(frequencyHz, dutyPercent);
+}
+
+void buzzOnce(uint16_t durationMs) {
+  buzzSingle(durationMs, kModeSwitchToneHz, kModeSwitchDutyPercent);
+}
+
+static void buzzControlStartStop() {
+  buzzSingle(34, kControlStartStopToneHz, kControlDutyPercent);
+}
+
+static void buzzControlResetEdit() {
+  buzzSingle(42, kControlResetEditToneHz, kControlDutyPercent);
 }
 
 static void buzzTimestampStamp() {
-  // Distinct two-tone stamp confirmation.
-  buzzerStart(1760);
-  delay(55);
-  buzzerStop();
-  delay(20);
-  buzzerStart(1175);
-  delay(85);
-  buzzerStop();
+  if (timerAnyAlarmActive()) return;
+  s_buzzerCue = BUZZ_CUE_TIMESTAMP;
+  s_buzzerCueStep = 0;
+  s_buzzerCueStepStartedMs = crystalTimeGetMillis();
+  buzzerStartWithDuty(kTimestampToneAHz, kTimestampDutyPercent);
 }
 
-// Build compact GPS status token used in the status line:
-// NO=no reliable date/time, FX=3D fix, AC=acquiring, TI=time-only input/no sats.
-static void buildGpsStatus(char out[3], bool timeReliable, int satCount) {
-  if (!timeReliable) {
-    strcpy(out, "NO");
-  } else if (gps.location.isValid()) {
-    strcpy(out, "FX");
-  } else if (satCount > 0) {
-    strcpy(out, "AC");
-  } else {
-    strcpy(out, "TI");
-  }
-}
+void modeAudioUpdate() {
+  if (s_buzzerCue == BUZZ_CUE_NONE) return;
 
-// Keep MCU clock disciplined to GPS when valid, unless manual-set grace period is active.
-static void syncMcuFromGpsIfAllowed(bool timeReliable) {
-  if (!timeReliable || shouldSkipGPSSync()) {
+  if (timerAnyAlarmActive()) {
+    buzzerCueStop();
     return;
   }
 
-  TimeEdit_t gpsTime;
-  gpsTime.year = gps.date.year();
-  gpsTime.month = gps.date.month();
-  gpsTime.day = gps.date.day();
-  gpsTime.hour = gps.time.hour();
-  gpsTime.minute = gps.time.minute();
-  gpsTime.second = gps.time.second();
-  mcuTimeSync(&gpsTime);
+  uint32_t nowMs = crystalTimeGetMillis();
+
+  if (s_buzzerCue == BUZZ_CUE_SINGLE) {
+    if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, s_buzzerCueSingleMs)) {
+      buzzerCueStop();
+    }
+    return;
+  }
+
+  if (s_buzzerCue != BUZZ_CUE_TIMESTAMP) return;
+
+  switch (s_buzzerCueStep) {
+    case 0:
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 44)) {
+        buzzerStop();
+        s_buzzerCueStep = 1;
+        s_buzzerCueStepStartedMs = nowMs;
+      }
+      break;
+    case 1:
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 18)) {
+        buzzerStartWithDuty(kTimestampToneBHz, kTimestampDutyPercent);
+        s_buzzerCueStep = 2;
+        s_buzzerCueStepStartedMs = nowMs;
+      }
+      break;
+    default:
+      if (crystalTimeElapsedMs(s_buzzerCueStepStartedMs, 54)) {
+        buzzerCueStop();
+      }
+      break;
+  }
+}
+
+// Build compact GPS status token used in the status line:
+// NO=no reliable GPS time/date, 3D=3D-quality fix, 2D=position fix,
+// AC=acquiring (satellites present but no position fix yet).
+static void buildGpsStatus(char out[3], bool timeReliable, int satCount, bool has3d) {
+  if (has3d) {
+    out[0] = '3'; out[1] = 'D'; out[2] = '\0';
+  } else if (gps.location.isValid()) {
+    out[0] = '2'; out[1] = 'D'; out[2] = '\0';
+  } else if (satCount > 0) {
+    out[0] = 'A'; out[1] = 'C'; out[2] = '\0';
+  } else {
+    (void)timeReliable;
+    out[0] = 'N'; out[1] = 'O'; out[2] = '\0';
+  }
+}
+
+// Convert true heading degrees to a fixed-width 3-char cardinal token.
+// Examples: 030 -> NNE, 270 -> W  , 359 -> N  .
+static void headingDegToCardinal3(uint16_t headingDeg, char out[4]) {
+  uint8_t idx = (uint8_t)(((uint32_t)headingDeg * 10UL + 112UL) / 225UL);
+  idx &= 0x0F;
+
+  switch (idx) {
+    case 0:  out[0] = 'N'; out[1] = ' '; out[2] = ' '; break;
+    case 1:  out[0] = 'N'; out[1] = 'N'; out[2] = 'E'; break;
+    case 2:  out[0] = 'N'; out[1] = 'E'; out[2] = ' '; break;
+    case 3:  out[0] = 'E'; out[1] = 'N'; out[2] = 'E'; break;
+    case 4:  out[0] = 'E'; out[1] = ' '; out[2] = ' '; break;
+    case 5:  out[0] = 'E'; out[1] = 'S'; out[2] = 'E'; break;
+    case 6:  out[0] = 'S'; out[1] = 'E'; out[2] = ' '; break;
+    case 7:  out[0] = 'S'; out[1] = 'S'; out[2] = 'E'; break;
+    case 8:  out[0] = 'S'; out[1] = ' '; out[2] = ' '; break;
+    case 9:  out[0] = 'S'; out[1] = 'S'; out[2] = 'W'; break;
+    case 10: out[0] = 'S'; out[1] = 'W'; out[2] = ' '; break;
+    case 11: out[0] = 'W'; out[1] = 'S'; out[2] = 'W'; break;
+    case 12: out[0] = 'W'; out[1] = ' '; out[2] = ' '; break;
+    case 13: out[0] = 'W'; out[1] = 'N'; out[2] = 'W'; break;
+    case 14: out[0] = 'N'; out[1] = 'W'; out[2] = ' '; break;
+    default: out[0] = 'N'; out[1] = 'N'; out[2] = 'W'; break;
+  }
+  out[3] = '\0';
 }
 
 // ===== GPS Validation Helper =====
@@ -80,38 +515,51 @@ bool isGPSTimeReliable() {
   if (!gps.time.isValid() || !gps.date.isValid()) {
     return false;
   }
-  
+
+  // Require at least one satellite in use so backup-RTC time (reported with 0
+  // sats while no signal) is never mistaken for satellite-sourced time.
+  if (gps.satellites.value() < 1) {
+    return false;
+  }
+
   int year = gps.date.year();
   int month = gps.date.month();
   int day = gps.date.day();
-  
-  // Sanity check: year should be reasonable (>= 2020)
+
   if (year < 2020) return false;
-  
-  // Month should be 1-12
   if (month < 1 || month > 12) return false;
-  
-  // Day should be 1-31
-  if (day < 1 || day > 31) return false;
-  
+  uint8_t maxDay = timeDaysInMonth((uint16_t)year, (uint8_t)month);
+  if (day < 1 || day > (int)maxDay) return false;
+
   return true;
 }
+
+// ===== Mode: UTC Only State =====
+static bool s_utcShowFirmware = false;
 
 // ===== Mode: UTC Only =====
 void displayModeUTCOnly() {
   static int lastSec = -1;
-  static int lastSat = -1;
   static bool lastTimeValid = false;
   static uint32_t lastEpoch = 0;
   static bool lastEditMode = false;
+  static uint16_t lastSyncElapsed = 0xFFFFU;
+  static bool lastSyncSearching = false;
+  static GpsSyncResult lastSyncResult = GPS_SYNC_RESULT_NONE;
+  static uint16_t lastSyncAge = 0xFFFFU;
+  static bool lastShowFirmware = false;
   
   // Reset cache if mode changed
   if (lastEpoch != g_modeEpoch) {
     lastSec = -1;
-    lastSat = -1;
     lastTimeValid = false;
     lastEpoch = g_modeEpoch;
     lastEditMode = false;
+    lastSyncElapsed = 0xFFFFU;
+    lastSyncSearching = false;
+    lastSyncResult = GPS_SYNC_RESULT_NONE;
+    lastSyncAge = 0xFFFFU;
+    lastShowFirmware = false;
     lcd.clear();
   }
   
@@ -124,8 +572,11 @@ void displayModeUTCOnly() {
     if (!editMode) {
       // Just exited edit mode - reset display cache to force redraw
       lastSec = -1;
-      lastSat = -1;
       lastTimeValid = false;
+      lastSyncElapsed = 0xFFFFU;
+      lastSyncSearching = false;
+      lastSyncResult = GPS_SYNC_RESULT_NONE;
+      lastSyncAge = 0xFFFFU;
     }
   }
   
@@ -146,116 +597,96 @@ void displayModeUTCOnly() {
     char min_str[3] = "MM";
     char sec_str[3] = "SS";
     
-    if (field == EDIT_FIELD_YEAR && shouldShow) {
-      snprintf(year_str, sizeof(year_str), "%04d", editData.year);
-    } else if (field == EDIT_FIELD_YEAR && !shouldShow) {
-      strcpy(year_str, "    ");
-    } else {
-      snprintf(year_str, sizeof(year_str), "%04d", editData.year);
+    formatUint4(year_str, editData.year);
+    formatUint2(month_str, editData.month);
+    formatUint2(day_str, editData.day);
+    formatUint2(hour_str, editData.hour);
+    formatUint2(min_str, editData.minute);
+    formatUint2(sec_str, editData.second);
+
+    if (field == EDIT_FIELD_YEAR && !shouldShow) {
+      year_str[0] = ' '; year_str[1] = ' '; year_str[2] = ' '; year_str[3] = ' ';
+    }
+    if (field == EDIT_FIELD_MONTH && !shouldShow) {
+      month_str[0] = ' '; month_str[1] = ' ';
+    }
+    if (field == EDIT_FIELD_DAY && !shouldShow) {
+      day_str[0] = ' '; day_str[1] = ' ';
+    }
+    if (field == EDIT_FIELD_HOUR && !shouldShow) {
+      hour_str[0] = ' '; hour_str[1] = ' ';
+    }
+    if (field == EDIT_FIELD_MINUTE && !shouldShow) {
+      min_str[0] = ' '; min_str[1] = ' ';
+    }
+    if (field == EDIT_FIELD_SECOND && !shouldShow) {
+      sec_str[0] = ' '; sec_str[1] = ' ';
     }
     
-    if (field == EDIT_FIELD_MONTH && shouldShow) {
-      snprintf(month_str, sizeof(month_str), "%02d", editData.month);
-    } else if (field == EDIT_FIELD_MONTH && !shouldShow) {
-      strcpy(month_str, "  ");
-    } else {
-      snprintf(month_str, sizeof(month_str), "%02d", editData.month);
-    }
-    
-    if (field == EDIT_FIELD_DAY && shouldShow) {
-      snprintf(day_str, sizeof(day_str), "%02d", editData.day);
-    } else if (field == EDIT_FIELD_DAY && !shouldShow) {
-      strcpy(day_str, "  ");
-    } else {
-      snprintf(day_str, sizeof(day_str), "%02d", editData.day);
-    }
-    
-    if (field == EDIT_FIELD_HOUR && shouldShow) {
-      snprintf(hour_str, sizeof(hour_str), "%02d", editData.hour);
-    } else if (field == EDIT_FIELD_HOUR && !shouldShow) {
-      strcpy(hour_str, "  ");
-    } else {
-      snprintf(hour_str, sizeof(hour_str), "%02d", editData.hour);
-    }
-    
-    if (field == EDIT_FIELD_MINUTE && shouldShow) {
-      snprintf(min_str, sizeof(min_str), "%02d", editData.minute);
-    } else if (field == EDIT_FIELD_MINUTE && !shouldShow) {
-      strcpy(min_str, "  ");
-    } else {
-      snprintf(min_str, sizeof(min_str), "%02d", editData.minute);
-    }
-    
-    if (field == EDIT_FIELD_SECOND && shouldShow) {
-      snprintf(sec_str, sizeof(sec_str), "%02d", editData.second);
-    } else if (field == EDIT_FIELD_SECOND && !shouldShow) {
-      strcpy(sec_str, "  ");
-    } else {
-      snprintf(sec_str, sizeof(sec_str), "%02d", editData.second);
-    }
-    
-    snprintf(buf, LCD_BUF_SIZE, "%s-%s-%s %s:%s:%sZ",
-             year_str, month_str, day_str, hour_str, min_str, sec_str);
+    buildUtcEditLine(buf, year_str, month_str, day_str, hour_str, min_str, sec_str);
     lcd.print(buf);
     
     // Show GPS status on line 2 as hint (blinking field is visual hint)
     lcd.setCursor(0, 1);
-    int sat = gps.satellites.value();
-    bool timeReliable = isGPSTimeReliable();
-    char gpsStatus[3];
-    buildGpsStatus(gpsStatus, timeReliable, sat);
     uint8_t batPercent = batteryGetPercentage();
-    snprintf(buf, LCD_BUF_SIZE, "GPS:%s SAT:%02d BAT:%02d", gpsStatus, sat, batPercent);
+    buildUtcEditStatusLine(buf, batPercent);
     lcd.print(buf);
     
   } else {
     // ===== NORMAL DISPLAY - Uses MCU time (ticks independently) =====
-    // GPS sync happens here: MCU clock is continuously synced to GPS when GPS signal is valid
-    // This allows GPS to provide periodic correction while MCU provides independent ticking
     bool timeValid = isGPSTimeReliable();
-    int sat = gps.satellites.value();
-    
-    // GPS SYNC: Every display update, if GPS is valid, MCU time syncs to GPS
-    // (see line ~168 in modes.cpp, displayModeUTCOnly function)
-    // BUT: Skip GPS sync if manual time was just set (5 second grace period)
-    syncMcuFromGpsIfAllowed(timeValid);
-    
+    bool utcDisplayValid = mcuTimeHasSync() || hasManualTime();
+    bool syncSearching = gpsSyncIsSearching();
+    uint16_t syncElapsed = syncSearching ? gpsSyncGetElapsedSeconds() : 0U;
+    GpsSyncResult syncResult = gpsSyncGetLastResult();
+    uint16_t syncAge = gpsSyncGetLastResultAgeSeconds();
+
     // Get current time from MCU (ticks based on elapsed ms)
     TimeEdit_t currentTime = mcuTimeGetCurrent();
-    int h = currentTime.hour;
-    int m = currentTime.minute;
     int s = currentTime.second;
-    
-    char gpsStatus[3];
-    buildGpsStatus(gpsStatus, timeValid, sat);
-    
-    if (s != lastSec || sat != lastSat || timeValid != lastTimeValid) {
+
+    if (s != lastSec || timeValid != lastTimeValid ||
+      syncSearching != lastSyncSearching || syncElapsed != lastSyncElapsed ||
+      syncResult != lastSyncResult || syncAge != lastSyncAge || s_utcShowFirmware != lastShowFirmware) {
       lcd.setCursor(0, 0);
       
       char buf[LCD_BUF_SIZE];
-      if (timeValid || hasManualTime()) {
+      if (utcDisplayValid) {
         // Display with MCU time (which keeps ticking)
-        snprintf(buf, LCD_BUF_SIZE,
-                 "%04d-%02d-%02d %02d:%02d:%02dZ",
-                 currentTime.year, currentTime.month, currentTime.day,
-                 h, m, s);
+        buildUtcDateTimeLine(buf, &currentTime);
       } else {
-        snprintf(buf, LCD_BUF_SIZE,
-                 "YYYY-MM-DD HH:MM:SSZ");
+        memcpy(buf, "YYYY-MM-DD HH:MM:SSZ", 20);
+        buf[20] = '\0';
       }
       lcd.print(buf);
       
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
-      uint8_t batPercent = batteryGetPercentage();
-      snprintf(buf2, LCD_BUF_SIZE,
-               "GPS:%s SAT:%02d BAT:%02d",
-               gpsStatus, sat, batPercent);
+      
+      if (s_utcShowFirmware) {
+        buildUtcFirmwareLine(buf2);
+      } else {
+        uint8_t batPercent = batteryGetPercentage();
+        if (syncSearching) {
+          uint16_t remain = gpsSyncGetRemainingSeconds();
+          buildUtcSyncSearchLine(buf2, remain, batPercent);
+        } else if (syncResult == GPS_SYNC_RESULT_OK) {
+          buildUtcSyncOkLine(buf2, syncAge, batPercent);
+        } else if (syncResult == GPS_SYNC_RESULT_TIMEOUT) {
+          buildUtcSyncTimeoutLine(buf2, batPercent);
+        } else {
+          buildUtcSyncNoneLine(buf2, batPercent);
+        }
+      }
       lcd.print(buf2);
       
       lastSec = s;
-      lastSat = sat;
       lastTimeValid = timeValid;
+      lastSyncSearching = syncSearching;
+      lastSyncElapsed = syncElapsed;
+      lastSyncResult = syncResult;
+      lastSyncAge = syncAge;
+      lastShowFirmware = s_utcShowFirmware;
     }
   }
 }
@@ -295,9 +726,6 @@ void displayModeUTCLocal() {
     }
   }
 
-  bool timeValid = isGPSTimeReliable();
-  syncMcuFromGpsIfAllowed(timeValid);
-  
   if (offsetEditMode) {
     // ===== OFFSET EDIT DISPLAY =====
     TimeEdit_t utcTime = mcuTimeGetCurrent();
@@ -308,40 +736,20 @@ void displayModeUTCLocal() {
     // Line 1: UTC time (MM-DD HH:MM:SS UTC)
     lcd.setCursor(0, 0);
     char buf1[LCD_BUF_SIZE];
-    snprintf(buf1, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d UTC",
-             utcTime.month, utcTime.day, utcTime.hour, utcTime.minute, utcTime.second);
+    formatMmDdHhMmSsTail3(buf1, &utcTime, "UTC");
     lcd.print(buf1);
     
     // Line 2: Local time with blinking offset
     lcd.setCursor(0, 1);
     char buf2[LCD_BUF_SIZE];
     char offsetStr[5];
-    if (shouldShowOffset) {
-      snprintf(offsetStr, sizeof(offsetStr), "%+03d", currentOffset);  // Show as +00/-07/+14
-    } else {
-      strcpy(offsetStr, "   ");  // Blank during flash-off
-    }
-    snprintf(buf2, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d %s",
-             localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offsetStr);
+    formatUtcOffset3(offsetStr, currentOffset, !shouldShowOffset);
+    formatMmDdHhMmSsTail3(buf2, &localTime, offsetStr);
     lcd.print(buf2);
     
   } else {
     // ===== NORMAL DISPLAY =====
     int8_t offset = getUTCOffset();
-
-    if (!timeValid && !hasManualTime()) {
-      if (lastTimeValid || lastOffsetShown != offset) {
-        lcd.setCursor(0, 0);
-        lcd.print("MM-DD HH:MM:SS UTC ");
-        lcd.setCursor(0, 1);
-        lcd.print("MM-DD HH:MM:SS +00 ");
-        lastTimeValid = false;
-        lastOffsetShown = offset;
-        lastSecUTC = -1;
-        lastSecLocal = -1;
-      }
-      return;
-    }
 
     TimeEdit_t utcTime = mcuTimeGetCurrent();
     TimeEdit_t localTime = calculateLocalTime(utcTime);
@@ -356,15 +764,15 @@ void displayModeUTCLocal() {
       // Line 1: UTC time (MM-DD HH:MM:SS UTC)
       lcd.setCursor(0, 0);
       char buf1[LCD_BUF_SIZE];
-      snprintf(buf1, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d UTC",
-               utcTime.month, utcTime.day, utcTime.hour, utcTime.minute, utcTime.second);
+      formatMmDdHhMmSsTail3(buf1, &utcTime, "UTC");
       lcd.print(buf1);
       
       // Line 2: Local time (MM-DD HH:MM:SS +/-offset)
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
-      snprintf(buf2, LCD_BUF_SIZE, "%02d-%02d %02d:%02d:%02d %+03d",
-               localTime.month, localTime.day, localTime.hour, localTime.minute, localTime.second, offset);
+      char offsetStr[4];
+      formatUtcOffset3(offsetStr, offset, false);
+      formatMmDdHhMmSsTail3(buf2, &localTime, offsetStr);
       lcd.print(buf2);
     }
   }
@@ -374,7 +782,7 @@ void displayModeUTCLocal() {
 static bool s_tsScrollActive = false;
 static bool s_tsConfirmDeleteAll = false;
 static uint8_t s_tsSelectedNewest = 0;  // 0 = newest
-static bool s_tsShowLocal = false;      // false=UTC, true=Local
+static bool s_tsShowLocal = true;       // false=UTC, true=Local
 static uint32_t s_tsDeleteAnimUntil = 0;
 static const uint16_t kTsScrollBlinkMs = 300;
 static const uint16_t kTsDeleteCueMs = 700;
@@ -411,11 +819,21 @@ static void formatTimestampLine(char* out,
                                 char navArrow) {
   TimeEdit_t shown = showLocal ? calculateLocalTime(*utcStamp) : *utcStamp;
   char tzSuffix = showLocal ? 'L' : 'Z';
-  snprintf(out, LCD_BUF_SIZE, "%c%02d %02d-%02d %02d:%02d:%02d%c%c",
-           prefix, number,
-           shown.month, shown.day,
-           shown.hour, shown.minute, shown.second,
-           tzSuffix, navArrow);
+  out[0] = prefix;
+  formatUint2(&out[1], number);
+  out[3] = ' ';
+  formatUint2(&out[4], shown.month);
+  out[6] = '-';
+  formatUint2(&out[7], shown.day);
+  out[9] = ' ';
+  formatUint2(&out[10], shown.hour);
+  out[12] = ':';
+  formatUint2(&out[13], shown.minute);
+  out[15] = ':';
+  formatUint2(&out[16], shown.second);
+  out[18] = tzSuffix;
+  out[19] = navArrow;
+  out[20] = '\0';
 }
 
 void displayModeTimestampReview() {
@@ -434,10 +852,10 @@ void displayModeTimestampReview() {
 
   bool markerVisible = true;
   if (s_tsScrollActive) {
-    markerVisible = ((millis() / (uint32_t)kTsScrollBlinkMs) % 2UL) == 0UL;
+    markerVisible = ((crystalTimeGetMillis() / (uint32_t)kTsScrollBlinkMs) % 2UL) == 0UL;
   }
 
-  bool deleteAnimActive = millis() < s_tsDeleteAnimUntil;
+  bool deleteAnimActive = (int32_t)(s_tsDeleteAnimUntil - crystalTimeGetMillis()) > 0;
 
   uint32_t sig = ((uint32_t)count)
                | ((uint32_t)s_tsSelectedNewest << 8)
@@ -475,9 +893,9 @@ void displayModeTimestampReview() {
 
   if (s_tsConfirmDeleteAll) {
     lcd.setCursor(0, 0);
-    lcd.print(" Delete ALL stamps? ");
+    lcd.print(F(" Delete ALL stamps? "));
     lcd.setCursor(0, 1);
-    lcd.print(" L:Cancel R:Delete ");
+    lcd.print(F(" L:Cancel R:Delete "));
     return;
   }
 
@@ -485,10 +903,10 @@ void displayModeTimestampReview() {
     char marker = markerVisible ? '>' : ' ';
     lcd.setCursor(0, 0);
     char line1[LCD_BUF_SIZE];
-    snprintf(line1, LCD_BUF_SIZE, "%c00 -- -- --:--:--Z ", marker);
+    formatTimestampEmptySelectedLine(line1, marker);
     lcd.print(line1);
     lcd.setCursor(0, 1);
-    lcd.print(" 00 -- -- --:--:-- ");
+    lcd.print(F(" 00 -- -- --:--:-- "));
     return;
   }
 
@@ -511,8 +929,7 @@ void displayModeTimestampReview() {
   if (hasSecond) {
     formatTimestampLine(line2, ' ', (uint8_t)(s_tsSelectedNewest + 2U), &t1, s_tsShowLocal, downArrow);
   } else {
-    snprintf(line2, LCD_BUF_SIZE, " 00 -- -- --:--:--%c%c",
-             s_tsShowLocal ? 'L' : 'Z', downArrow);
+    formatTimestampEmptySecondLine(line2, s_tsShowLocal ? 'L' : 'Z', downArrow);
   }
   lcd.print(line2);
 }
@@ -539,12 +956,23 @@ void displayModeStopwatch() {
 
     lcd.setCursor(0, 0);
     char line1[LCD_BUF_SIZE];
-    snprintf(line1, LCD_BUF_SIZE, "STOPWATCH       %s", running ? "RUN" : "STP");
+    memcpy(line1, "STOPWATCH        ", 17);
+    memcpy(&line1[17], running ? "RUN" : "STP", 3);
+    line1[20] = '\0';
     lcd.print(line1);
 
     lcd.setCursor(0, 1);
     char line2[LCD_BUF_SIZE];
-    snprintf(line2, LCD_BUF_SIZE, "     %02d:%02d:%02d.%1d     ", h, m, s, t);
+    memcpy(line2, "     ", 5);
+    appendUint2(&line2[5], h);
+    line2[7] = ':';
+    appendUint2(&line2[8], m);
+    line2[10] = ':';
+    appendUint2(&line2[11], s);
+    line2[13] = '.';
+    line2[14] = (char)('0' + t);
+    memcpy(&line2[15], "     ", 5);
+    line2[20] = '\0';
     lcd.print(line2);
 
     lastTenths = tenths;
@@ -590,7 +1018,9 @@ void displayModeTimer() {
     lcd.setCursor(0, 0);
     char head[LCD_BUF_SIZE];
     const char* state = alarm ? "ALM" : (running ? "RUN" : "STP");
-    snprintf(head, LCD_BUF_SIZE, "FUEL TIMER      %s", state);
+    memcpy(head, "FUEL TIMER       ", 17);
+    memcpy(&head[17], state, 3);
+    head[20] = '\0';
     lcd.print(head);
 
     if (editActive) {
@@ -600,25 +1030,40 @@ void displayModeTimer() {
       TimerEditField_t field = timerEditGetField();
 
       char hh[3], mm[3], ss[3];
-      snprintf(hh, sizeof(hh), "%02d", eh);
-      snprintf(mm, sizeof(mm), "%02d", em);
-      snprintf(ss, sizeof(ss), "%02d", es);
+      formatUint2(hh, eh);
+      formatUint2(mm, em);
+      formatUint2(ss, es);
 
       if (!show) {
-        if (field == TIMER_EDIT_HOUR) strcpy(hh, "  ");
-        else if (field == TIMER_EDIT_MINUTE) strcpy(mm, "  ");
-        else if (field == TIMER_EDIT_SECOND) strcpy(ss, "  ");
+        if (field == TIMER_EDIT_HOUR) { hh[0] = ' '; hh[1] = ' '; hh[2] = '\0'; }
+        else if (field == TIMER_EDIT_MINUTE) { mm[0] = ' '; mm[1] = ' '; mm[2] = '\0'; }
+        else if (field == TIMER_EDIT_SECOND) { ss[0] = ' '; ss[1] = ' '; ss[2] = '\0'; }
       }
 
       lcd.setCursor(0, 1);
       char line2[LCD_BUF_SIZE];
-      snprintf(line2, LCD_BUF_SIZE, "     - %s:%s:%s      ", hh, mm, ss);
+      memcpy(line2, "     - ", 7);
+      memcpy(&line2[7], hh, 2);
+      line2[9] = ':';
+      memcpy(&line2[10], mm, 2);
+      line2[12] = ':';
+      memcpy(&line2[13], ss, 2);
+      memcpy(&line2[15], "      ", 6);
+      line2[20] = '\0';
       lcd.print(line2);
     } else {
       lcd.setCursor(0, 1);
       char line2[LCD_BUF_SIZE];
-      snprintf(line2, LCD_BUF_SIZE, "     %c %02d:%02d:%02d     ",
-               elapsed ? '+' : '-', h, m, s);
+      memcpy(line2, "     ", 5);
+      line2[5] = elapsed ? '+' : '-';
+      line2[6] = ' ';
+      appendUint2(&line2[7], h);
+      line2[9] = ':';
+      appendUint2(&line2[10], m);
+      line2[12] = ':';
+      appendUint2(&line2[13], s);
+      memcpy(&line2[15], "     ", 5);
+      line2[20] = '\0';
       lcd.print(line2);
     }
 
@@ -689,41 +1134,76 @@ void displayModeLocalOnly() {
 
   // Build date part string.
   char datePart[20];
+  char* datePtr = datePart;
   switch (s_deskDateFmt) {
     case 0:  // ISO:        2026-04-16
-      snprintf(datePart, sizeof(datePart), "%04d-%02d-%02d",
-               t.year, t.month, t.day);
+      datePtr = appendUint4(datePtr, t.year);
+      *datePtr++ = '-';
+      datePtr = appendUint2(datePtr, t.month);
+      *datePtr++ = '-';
+      datePtr = appendUint2(datePtr, t.day);
       break;
     case 1:  // ISO+day:    Thu 2026-04-16
-      snprintf(datePart, sizeof(datePart), "%s %04d-%02d-%02d",
-               kDow[dow], t.year, t.month, t.day);
+      datePtr = appendText(datePtr, kDow[dow]);
+      *datePtr++ = ' ';
+      datePtr = appendUint4(datePtr, t.year);
+      *datePtr++ = '-';
+      datePtr = appendUint2(datePtr, t.month);
+      *datePtr++ = '-';
+      datePtr = appendUint2(datePtr, t.day);
       break;
     case 2:  // US:         Apr 16, 2026
-      snprintf(datePart, sizeof(datePart), "%s %02d, %04d",
-               kMon[mo], t.day, t.year);
+      datePtr = appendText(datePtr, kMon[mo]);
+      *datePtr++ = ' ';
+      datePtr = appendUint2(datePtr, t.day);
+      *datePtr++ = ',';
+      *datePtr++ = ' ';
+      datePtr = appendUint4(datePtr, t.year);
       break;
     case 3:  // US+day:     Thu Apr 16 2026
-      snprintf(datePart, sizeof(datePart), "%s %s %02d %04d",
-               kDow[dow], kMon[mo], t.day, t.year);
+      datePtr = appendText(datePtr, kDow[dow]);
+      *datePtr++ = ' ';
+      datePtr = appendText(datePtr, kMon[mo]);
+      *datePtr++ = ' ';
+      datePtr = appendUint2(datePtr, t.day);
+      *datePtr++ = ' ';
+      datePtr = appendUint4(datePtr, t.year);
       break;
     case 4:  // EU+day:     Thu 16 Apr 2026
     default:
-      snprintf(datePart, sizeof(datePart), "%s %02d %s %04d",
-               kDow[dow], t.day, kMon[mo], t.year);
+      datePtr = appendText(datePtr, kDow[dow]);
+      *datePtr++ = ' ';
+      datePtr = appendUint2(datePtr, t.day);
+      *datePtr++ = ' ';
+      datePtr = appendText(datePtr, kMon[mo]);
+      *datePtr++ = ' ';
+      datePtr = appendUint4(datePtr, t.year);
       break;
   }
+  *datePtr = '\0';
 
   // Build time part string.
   char timePart[14];
+  char* timePtr = timePart;
   if (s_deskIs12H) {
     uint8_t hh = t.hour % 12;
     if (hh == 0) hh = 12;
-    snprintf(timePart, sizeof(timePart), "%02d:%02d:%02d %s",
-             hh, t.minute, t.second, t.hour < 12 ? "AM" : "PM");
+    timePtr = appendUint2(timePtr, hh);
+    *timePtr++ = ':';
+    timePtr = appendUint2(timePtr, t.minute);
+    *timePtr++ = ':';
+    timePtr = appendUint2(timePtr, t.second);
+    *timePtr++ = ' ';
+    *timePtr++ = (t.hour < 12) ? 'A' : 'P';
+    *timePtr++ = 'M';
   } else {
-    snprintf(timePart, sizeof(timePart), "%02d:%02d:%02d",
-             t.hour, t.minute, t.second);
+    timePtr = appendUint2(timePtr, t.hour);
+    *timePtr++ = ':';
+    timePtr = appendUint2(timePtr, t.minute);
+    *timePtr++ = ':';
+    timePtr = appendUint2(timePtr, t.second);
   }
+  *timePtr = '\0';
 
   // Center both lines.
   char line1[LCD_BUF_SIZE], line2[LCD_BUF_SIZE];
@@ -735,7 +1215,6 @@ void displayModeLocalOnly() {
   lcd.setCursor(0, 1);
   lcd.print(line2);
 }
-
 // ===== Mode: GPS Info =====
 void displayModeGpsInfo() {
   static uint32_t lastEpoch = 0;
@@ -749,69 +1228,120 @@ void displayModeGpsInfo() {
 
   bool gsValid = gps.speed.isValid();
   bool hdgValid = gps.course.isValid();
-  bool altValid = gps.altitude.isValid();
+  bool timeReliable = isGPSTimeReliable();
+  bool hasFreshFix = gpsHasFreshFixSincePowerOn();
+  int sat = gps.satellites.value();
+  if (sat < 0) sat = 0;
+  if (sat > 99) sat = 99;
+  char gpsStatus[3];
+  int32_t altFeet = 0;
+  bool altValid = gpsTryGetAltitudeFeet(&altFeet);
+  bool has3d = altValid && gps.location.isValid() && (sat >= 4);
+  buildGpsStatus(gpsStatus, timeReliable, sat, has3d);
 
   uint16_t gsTenths = 0;
   uint16_t headingDeg = 0;
-  int16_t altFeet = 0;
+  bool pdopValid = false;
+  uint16_t pdopX10 = 0;
+
+  // Hide stale parser values until a fresh fix is received after power-on.
+  if (!hasFreshFix) {
+    gsValid = false;
+    hdgValid = false;
+    altValid = false;
+    pdopValid = false;
+    sat = 0;
+  }
 
   if (gsValid) {
-    double gsKnots = gps.speed.knots();
-    if (gsKnots < 0.0) gsKnots = 0.0;
-    if (gsKnots > 999.9) gsKnots = 999.9;
-    gsTenths = (uint16_t)(gsKnots * 10.0 + 0.5);
+    // TinyGPS++ speed.value() is knots * 100.
+    uint32_t gsCentiKnots = gps.speed.value();
+    if (gsCentiKnots > 9999U) gsCentiKnots = 9999U;
+    gsTenths = (uint16_t)((gsCentiKnots + 5U) / 10U);
   }
 
   if (hdgValid) {
-    double hdg = gps.course.deg();
-    while (hdg < 0.0) hdg += 360.0;
-    while (hdg >= 360.0) hdg -= 360.0;
-    headingDeg = (uint16_t)(hdg + 0.5);
-    if (headingDeg >= 360U) headingDeg = 0;
+    // TinyGPS++ course.value() is degrees * 100.
+    uint32_t courseCentiDeg = gps.course.value();
+    headingDeg = (uint16_t)(((courseCentiDeg + 50U) / 100U) % 360U);
   }
 
-  if (altValid) {
-    double alt = gps.altitude.feet();
-    if (alt < -999.0) alt = -999.0;
-    if (alt > 32767.0) alt = 32767.0;
-    altFeet = (int16_t)(alt + (alt >= 0.0 ? 0.5 : -0.5));
-  }
+  pdopValid = gpsTryGetPdopX10(&pdopX10);
 
   uint32_t sig = 0;
   sig |= (uint32_t)gsValid;
   sig |= (uint32_t)hdgValid << 1;
   sig |= (uint32_t)altValid << 2;
+  sig ^= (uint32_t)(sat & 0x7F) << 6;
+  sig ^= (uint32_t)((uint8_t)gpsStatus[0]) << 13;
+  sig ^= (uint32_t)((uint8_t)gpsStatus[1]) << 21;
   sig ^= (uint32_t)gsTenths << 3;
   sig ^= (uint32_t)headingDeg << 14;
   sig ^= (uint32_t)((uint16_t)altFeet) << 23;
+  sig ^= (uint32_t)pdopValid << 5;
+  sig ^= (uint32_t)pdopX10 << 9;
 
   if (sig == lastSig) {
     return;
   }
   lastSig = sig;
 
-  char gsStr[7] = "  --.-";
+  char gsStr[4] = "---";
   char hdgStr[4] = "---";
-  char altStr[8] = "   ----";
+  char hdgCard[4] = "---";
+  char altStr[6] = "-----";
+  char gpsFixSat[5] = "NO--";
+  char pdopTok[4] = "P--";
 
   if (gsValid) {
-    snprintf(gsStr, sizeof(gsStr), "%6.1f", gps.speed.knots());
+    uint16_t whole = (uint16_t)(gsTenths / 10U);
+    formatUint3(gsStr, whole);
   }
   if (hdgValid) {
-    snprintf(hdgStr, sizeof(hdgStr), "%03u", (unsigned int)headingDeg);
+    formatUint3(hdgStr, headingDeg);
+    headingDegToCardinal3(headingDeg, hdgCard);
   }
   if (altValid) {
-    snprintf(altStr, sizeof(altStr), "%7.0f", gps.altitude.feet());
+    formatIntRightAligned5(altStr, altFeet);
+  }
+  if (hasFreshFix) {
+    gpsFixSat[0] = gpsStatus[0];
+    gpsFixSat[1] = gpsStatus[1];
+    formatUint2(&gpsFixSat[2], (uint8_t)sat);
+  } else {
+    gpsFixSat[0] = '-';
+    gpsFixSat[1] = '-';
+    gpsFixSat[2] = '-';
+    gpsFixSat[3] = '-';
+    gpsFixSat[4] = '\0';
+  }
+  if (pdopValid) {
+    if (pdopX10 > 99U) pdopX10 = 99U;
+    pdopTok[0] = 'P';
+    formatUint2(&pdopTok[1], (uint8_t)pdopX10);
   }
 
   lcd.setCursor(0, 0);
   char line1[LCD_BUF_SIZE];
-  snprintf(line1, LCD_BUF_SIZE, "GS:%sKT HDG:%s ", gsStr, hdgStr);
+  memcpy(line1, "ALT:", 4);
+  memcpy(&line1[4], altStr, 5);
+  memcpy(&line1[9], "FT GS:", 6);
+  memcpy(&line1[15], gsStr, 3);
+  memcpy(&line1[18], "KT", 2);
+  line1[20] = '\0';
   lcd.print(line1);
 
   lcd.setCursor(0, 1);
   char line2[LCD_BUF_SIZE];
-  snprintf(line2, LCD_BUF_SIZE, "ALT:%sFT       ", altStr);
+  memcpy(line2, "TRK:", 4);
+  memcpy(&line2[4], hdgStr, 3);
+  line2[7] = ' ';
+  memcpy(&line2[8], hdgCard, 3);
+  line2[11] = ' ';
+  memcpy(&line2[12], gpsFixSat, 4);
+  line2[16] = ' ';
+  memcpy(&line2[17], pdopTok, 3);
+  line2[20] = '\0';
   lcd.print(line2);
 }
 
@@ -866,6 +1396,7 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     return;
   }
 
+  // Global GPS sync request (right long) - works from any mode unless editing.
   // Any button acknowledges active timer alarms and consumes the event.
   if (event != BUTTON_NONE && timerAnyAlarmActive()) {
     timerAcknowledgeAllAlarms();
@@ -876,6 +1407,11 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
     if (event == BUTTON_ENC_LONG) {
       TimeEdit_t currentTime = mcuTimeGetCurrent();
       timeEditStart(&currentTime);
+    } else if (event == BUTTON_RIGHT_LONG && !timeEditIsActive()) {
+      gpsSyncRequest();
+    } else if (event == BUTTON_LEFT_LONG) {
+      s_utcShowFirmware = !s_utcShowFirmware;
+      g_modeEpoch++;
     } else if (event == BUTTON_RIGHT_SHORT && timeEditIsActive()) {
       timeEditStop();
     } else if (event == BUTTON_ENC_SHORT && timeEditIsActive()) {
@@ -919,7 +1455,7 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
         } else if (s_tsSelectedNewest >= count) {
           s_tsSelectedNewest = (uint8_t)(count - 1);
         }
-        s_tsDeleteAnimUntil = millis() + (uint32_t)kTsDeleteCueMs;
+        s_tsDeleteAnimUntil = crystalTimeGetMillis() + (uint32_t)kTsDeleteCueMs;
         g_modeEpoch++;
       }
     } else if (event == BUTTON_LEFT_LONG) {
@@ -929,22 +1465,33 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
   } else if (mode == MODE_STOPWATCH) {
     if (event == BUTTON_ENC_SHORT || event == BUTTON_RIGHT_SHORT) {
       stopwatchStartStopToggle(0);
+      buzzControlStartStop();
     } else if (event == BUTTON_LEFT_SHORT) {
       stopwatchReset(0);
+      buzzControlResetEdit();
     }
   } else if (mode == MODE_TIMER) {
     if (event == BUTTON_ENC_LONG) {
+      bool wasEditing = timerEditIsActive();
       timerEditStart(0);
+      if (!wasEditing && timerEditIsActive()) {
+        buzzControlResetEdit();
+      }
     } else if (event == BUTTON_RIGHT_SHORT && timerEditIsActive()) {
       timerEditFinish();
+      buzzControlResetEdit();
     } else if (event == BUTTON_ENC_SHORT && timerEditIsActive()) {
       timerEditButtonPress();
+      buzzControlResetEdit();
     } else if (event == BUTTON_ENC_SHORT) {
       timerStartStopToggle(0);
+      buzzControlStartStop();
     } else if (event == BUTTON_RIGHT_SHORT) {
       timerStartStopToggle(0);
+      buzzControlStartStop();
     } else if (event == BUTTON_LEFT_SHORT) {
       timerReset(0);
+      buzzControlResetEdit();
     }
   } else if (mode == MODE_LOCAL_ONLY) {
     if (event == BUTTON_LEFT_SHORT) {

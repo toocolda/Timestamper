@@ -61,30 +61,34 @@ static int32_t timerCurrentSignedSeconds(uint8_t index) {
 }
 
 static void timerAlarmPatternUpdate(bool alarmWanted) {
+  static const uint16_t kAlarmToneAHz = 1047;
+  static const uint16_t kAlarmToneBHz = 784;
+  static const uint8_t kAlarmDutyPercent = 13;
+
   if (!alarmWanted) {
     if (g_alarmToneOn) {
       buzzerStop();
       g_alarmToneOn = false;
     }
     g_alarmStep = 0;
-    g_alarmLastStepMs = millis();
+    g_alarmLastStepMs = crystalTimeGetMillis();
     return;
   }
 
-  uint32_t now = millis();
+  uint32_t now = crystalTimeGetMillis();
   uint32_t stepDurMs = 0;
 
   switch (g_alarmStep) {
-    case 0: stepDurMs = 220; break;  // Tone A
-    case 1: stepDurMs = 90;  break;  // silence
-    case 2: stepDurMs = 220; break;  // Tone B
-    case 3: stepDurMs = 140; break;  // silence
-    case 4: stepDurMs = 260; break;  // Tone A long
-    case 5: stepDurMs = 420; break;  // gap
+    case 0: stepDurMs = 170; break;  // Tone A
+    case 1: stepDurMs = 65;  break;  // silence
+    case 2: stepDurMs = 170; break;  // Tone B
+    case 3: stepDurMs = 95;  break;  // silence
+    case 4: stepDurMs = 230; break;  // Tone A long
+    case 5: stepDurMs = 320; break;  // gap
     default: stepDurMs = 220; break;
   }
 
-  if (now - g_alarmLastStepMs < stepDurMs) {
+  if (!crystalTimeElapsedMs(g_alarmLastStepMs, stepDurMs)) {
     return;
   }
 
@@ -93,10 +97,10 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
 
   // Even steps with tones, odd steps silent.
   if (g_alarmStep == 0 || g_alarmStep == 4) {
-    buzzerStart(1400);
+    buzzerStartWithDuty(kAlarmToneAHz, kAlarmDutyPercent);
     g_alarmToneOn = true;
   } else if (g_alarmStep == 2) {
-    buzzerStart(900);
+    buzzerStartWithDuty(kAlarmToneBHz, kAlarmDutyPercent);
     g_alarmToneOn = true;
   } else {
     buzzerStop();
@@ -125,11 +129,11 @@ void timerModeUpdate() {
   if (g_timer.running && g_timer.runStartSignedSeconds > 0 && nowSigned <= 0 && !g_timer.alarmTriggered) {
     g_timer.alarmActive = true;
     g_timer.alarmTriggered = true;
-    g_timer.alarmStartedMs = millis();
+    g_timer.alarmStartedMs = crystalTimeGetMillis();
   }
 
   // Auto-clear alarm after timeout if user takes no action.
-  if (g_timer.alarmActive && (millis() - g_timer.alarmStartedMs >= kAlarmAutoClearMs)) {
+  if (g_timer.alarmActive && crystalTimeElapsedMs(g_timer.alarmStartedMs, kAlarmAutoClearMs)) {
     g_timer.alarmActive = false;
   }
 
@@ -198,6 +202,10 @@ bool timerAnyAlarmActive() {
   return g_timer.alarmActive;
 }
 
+bool timerAlarmToneOn(void) {
+  return g_timer.alarmActive && g_alarmToneOn;
+}
+
 void timerAcknowledgeAllAlarms() {
   g_timer.alarmActive = false;
   timerAlarmPatternUpdate(false);
@@ -224,7 +232,7 @@ void timerEditStart(uint8_t index) {
   g_timerEditIndex = i;
   g_timerEditField = TIMER_EDIT_HOUR;
   g_timerEditSeconds = preset;
-  g_timerEditFlashMs = millis();
+  g_timerEditFlashMs = crystalTimeGetMillis();
   g_timerEditShow = true;
 }
 
@@ -263,7 +271,7 @@ void timerEditButtonPress() {
   if (!g_timerEditActive) return;
 
   g_timerEditShow = true;
-  g_timerEditFlashMs = millis();
+  g_timerEditFlashMs = crystalTimeGetMillis();
 
   if (g_timerEditField == TIMER_EDIT_HOUR) {
     g_timerEditField = TIMER_EDIT_MINUTE;
@@ -297,9 +305,9 @@ void timerEditFinish() {
 
 bool timerEditShouldFlash() {
   if (!g_timerEditActive) return true;
-  if (millis() - g_timerEditFlashMs > kEditFlashIntervalMs) {
+  if (crystalTimeElapsedMs(g_timerEditFlashMs, kEditFlashIntervalMs)) {
     g_timerEditShow = !g_timerEditShow;
-    g_timerEditFlashMs = millis();
+    g_timerEditFlashMs = crystalTimeGetMillis();
   }
   return g_timerEditShow;
 }

@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include "time/time_edit.h"
 #include "time/mcu_time.h"
+#include "time/crystal_time.h"
+#include "time/time_utils.h"
+#include "core/modes.h"
 
 // ===== Time Edit State =====
 static TimeEdit_t g_editData;
@@ -10,7 +13,7 @@ static uint32_t g_lastInputTime = 0;
 static uint32_t g_flashToggleTime = 0;
 static bool g_showFlash = true;
 
-#define INACTIVITY_TIMEOUT_MS 10000
+#define INACTIVITY_TIMEOUT_MS 30000
 #define FLASH_INTERVAL_MS 300
 
 // ===== Start Time Edit Mode =====
@@ -29,8 +32,8 @@ void timeEditStart(TimeEdit_t* timeData) {
   
   g_isEditing = true;
   g_currentField = EDIT_FIELD_YEAR;
-  g_lastInputTime = millis();
-  g_flashToggleTime = millis();
+  g_lastInputTime = crystalTimeGetMillis();
+  g_flashToggleTime = crystalTimeGetMillis();
   g_showFlash = true;
 }
 
@@ -38,6 +41,9 @@ void timeEditStart(TimeEdit_t* timeData) {
 void timeEditStop() {
   if (g_isEditing && g_currentField != EDIT_FIELD_NONE) {
     setManualTime(&g_editData);
+    // Manual edits intentionally clear the previous GPS result so UTC mode
+    // shows that the clock is user-set rather than freshly GPS-verified.
+    gpsSyncClearLastResult();
     // Don't sync MCU time - let manual time display directly without elapsed calculation
   }
   g_isEditing = false;
@@ -49,7 +55,7 @@ bool timeEditIsActive() {
   if (!g_isEditing) return false;
   
   // Check for inactivity timeout
-  if (millis() - g_lastInputTime > INACTIVITY_TIMEOUT_MS) {
+  if (crystalTimeElapsedMs(g_lastInputTime, INACTIVITY_TIMEOUT_MS)) {
     timeEditStop();
     return false;
   }
@@ -62,7 +68,7 @@ void timeEditRotaryInput(int32_t delta) {
   if (!g_isEditing) return;
   if (delta == 0) return;
   
-  g_lastInputTime = millis();
+  g_lastInputTime = crystalTimeGetMillis();
   int direction = (delta > 0) ? 1 : -1;
   
   switch (g_currentField) {
@@ -86,10 +92,7 @@ void timeEditRotaryInput(int32_t delta) {
       // Use signed int to handle negative wrapping correctly
       int8_t d = (int8_t)g_editData.day + direction;
       // Wrapping with validation - get max day for month
-      uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-      bool isLeap = (g_editData.year % 400 == 0) || ((g_editData.year % 4 == 0) && (g_editData.year % 100 != 0));
-      uint8_t maxDay = daysInMonth[g_editData.month - 1];
-      if (isLeap && g_editData.month == 2) maxDay = 29;
+      uint8_t maxDay = timeDaysInMonth(g_editData.year, g_editData.month);
       
       // Wrap at boundaries
       if (d < 1) d = maxDay;
@@ -130,9 +133,9 @@ void timeEditRotaryInput(int32_t delta) {
 void timeEditButtonPress() {
   if (!g_isEditing) return;
   
-  g_lastInputTime = millis();
+  g_lastInputTime = crystalTimeGetMillis();
   g_showFlash = true;
-  g_flashToggleTime = millis();
+  g_flashToggleTime = crystalTimeGetMillis();
   
   switch (g_currentField) {
     case EDIT_FIELD_YEAR:
@@ -172,13 +175,8 @@ EditField_t timeEditGetCurrentField() {
 // ===== Flash Control for Visual Feedback =====
 bool timeEditShouldFlash() {
   if (!g_isEditing) return true;
-  
-  if (millis() - g_flashToggleTime > FLASH_INTERVAL_MS) {
-    g_showFlash = !g_showFlash;
-    g_flashToggleTime = millis();
-  }
-  
-  return g_showFlash;
+
+  return timeFlashToggle(&g_flashToggleTime, &g_showFlash, FLASH_INTERVAL_MS);
 }
 
 // ===== Date Validation =====
@@ -187,13 +185,7 @@ bool isValidDate(uint16_t year, uint8_t month, uint8_t day) {
   if (month < 1 || month > 12) return false;
   
   // Validate day - check if day is in valid range for the month
-  uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  
-  // Check for leap year
-  bool isLeapYear = (year % 400 == 0) || ((year % 4 == 0) && (year % 100 != 0));
-  if (isLeapYear) daysInMonth[1] = 29;  // February has 29 days in leap year
-  
-  if (day < 1 || day > daysInMonth[month - 1]) return false;
+  if (day < 1 || day > timeDaysInMonth(year, month)) return false;
   
   return true;
 }

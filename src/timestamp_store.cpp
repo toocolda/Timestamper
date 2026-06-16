@@ -148,12 +148,43 @@ bool timestampStoreDeleteByNewest(uint8_t newestIndex) {
   uint8_t removeChrono = 0;
   if (!chronoFromNewest(newestIndex, &removeChrono)) return false;
 
-  // Shift chronological [remove+1..count-1] left by one slot.
-  for (uint8_t chrono = removeChrono; chrono + 1 < g_count; chrono++) {
-    uint8_t srcPhys = physicalFromChrono((uint8_t)(chrono + 1));
-    uint8_t dstPhys = physicalFromChrono(chrono);
-    PackedStamp p = readPhysical(srcPhys);
-    writePhysical(dstPhys, &p);
+  if (g_count == 0) return false;
+
+  // Fast path: deleting the oldest only advances the ring head.
+  if (removeChrono == 0) {
+    g_oldest = (uint8_t)((g_oldest + 1U) % TIMESTAMP_STORE_MAX);
+    g_count--;
+    saveMeta();
+    return true;
+  }
+
+  // Fast path: deleting the newest only shrinks the count.
+  if (removeChrono + 1U == g_count) {
+    g_count--;
+    saveMeta();
+    return true;
+  }
+
+  uint8_t newerCount = (uint8_t)((g_count - 1U) - removeChrono);
+  uint8_t olderCount = removeChrono;
+
+  if (olderCount < newerCount) {
+    // Shift the older side one slot toward newer entries, then advance head.
+    for (uint8_t chrono = removeChrono; chrono > 0U; chrono--) {
+      uint8_t srcPhys = physicalFromChrono((uint8_t)(chrono - 1U));
+      uint8_t dstPhys = physicalFromChrono(chrono);
+      PackedStamp p = readPhysical(srcPhys);
+      writePhysical(dstPhys, &p);
+    }
+    g_oldest = (uint8_t)((g_oldest + 1U) % TIMESTAMP_STORE_MAX);
+  } else {
+    // Shift the newer side one slot toward older entries.
+    for (uint8_t chrono = removeChrono; chrono + 1U < g_count; chrono++) {
+      uint8_t srcPhys = physicalFromChrono((uint8_t)(chrono + 1U));
+      uint8_t dstPhys = physicalFromChrono(chrono);
+      PackedStamp p = readPhysical(srcPhys);
+      writePhysical(dstPhys, &p);
+    }
   }
 
   g_count--;

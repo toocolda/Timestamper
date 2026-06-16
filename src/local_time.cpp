@@ -1,8 +1,40 @@
 #include <Arduino.h>
+#include <EEPROM.h>
 #include "time/local_time.h"
+#include "time/crystal_time.h"
+#include "time/time_utils.h"
 
 // ===== UTC Offset Storage =====
 static int8_t g_utcOffset = 0;  // Default: UTC+00
+static bool g_utcOffsetLoaded = false;
+
+static const int kUtcOffsetSignatureAddr = E2END - 1;
+static const int kUtcOffsetValueAddr = E2END - 2;
+static const uint8_t kUtcOffsetSignature = 0xA5;
+
+static void loadUTCOffset() {
+  if (g_utcOffsetLoaded) return;
+
+  if (EEPROM.read(kUtcOffsetSignatureAddr) == kUtcOffsetSignature) {
+    uint8_t storedOffset = EEPROM.read(kUtcOffsetValueAddr);
+    if (storedOffset <= 26) {
+      g_utcOffset = (int8_t)storedOffset - 12;
+    } else {
+      g_utcOffset = 0;
+    }
+  } else {
+    g_utcOffset = 0;
+    EEPROM.update(kUtcOffsetValueAddr, (uint8_t)(g_utcOffset + 12));
+    EEPROM.update(kUtcOffsetSignatureAddr, kUtcOffsetSignature);
+  }
+
+  g_utcOffsetLoaded = true;
+}
+
+static void saveUTCOffset() {
+  EEPROM.update(kUtcOffsetValueAddr, (uint8_t)(g_utcOffset + 12));
+  EEPROM.update(kUtcOffsetSignatureAddr, kUtcOffsetSignature);
+}
 
 // ===== Offset Edit State =====
 static int8_t g_offsetEditValue = 0;           // Value being edited
@@ -14,13 +46,16 @@ static bool g_offsetShowFlash = true;
 
 // ===== Get Current UTC Offset =====
 int8_t getUTCOffset() {
+  loadUTCOffset();
   return g_utcOffset;
 }
 
 // ===== Set UTC Offset =====
 void setUTCOffset(int8_t offset) {
   if (offset >= -12 && offset <= 14) {
+    loadUTCOffset();
     g_utcOffset = offset;
+    saveUTCOffset();
   }
 }
 
@@ -45,20 +80,12 @@ TimeEdit_t calculateLocalTimeWithOffset(TimeEdit_t utcTime, int8_t offset) {
         localTime.year--;
         localTime.month = 12;
       }
-      // Get days in previous month
-      uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-      bool isLeap = (localTime.year % 400 == 0) || ((localTime.year % 4 == 0) && (localTime.year % 100 != 0));
-      uint8_t maxDay = daysInMonth[localTime.month - 1];
-      if (isLeap && localTime.month == 2) maxDay = 29;
-      localTime.day = maxDay;
+      localTime.day = timeDaysInMonth(localTime.year, localTime.month);
     }
     totalHour += 24;
   } else if (totalHour >= 24) {
     // Next day
-    uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    bool isLeap = (localTime.year % 400 == 0) || ((localTime.year % 4 == 0) && (localTime.year % 100 != 0));
-    uint8_t maxDay = daysInMonth[localTime.month - 1];
-    if (isLeap && localTime.month == 2) maxDay = 29;
+    uint8_t maxDay = timeDaysInMonth(localTime.year, localTime.month);
     
     localTime.day++;
     if (localTime.day > maxDay) {
@@ -80,7 +107,7 @@ TimeEdit_t calculateLocalTimeWithOffset(TimeEdit_t utcTime, int8_t offset) {
 void offsetEditStart(int8_t currentOffset) {
   g_offsetEditValue = currentOffset;
   g_offsetEditState = OFFSET_EDIT_ACTIVE;
-  g_offsetFlashToggleTime = millis();
+  g_offsetFlashToggleTime = crystalTimeGetMillis();
   g_offsetShowFlash = true;
 }
 
@@ -125,11 +152,6 @@ OffsetEditState_t offsetEditGetState() {
 // ===== Flash Control for Visual Feedback =====
 bool offsetEditShouldFlash() {
   if (g_offsetEditState != OFFSET_EDIT_ACTIVE) return true;
-  
-  if (millis() - g_offsetFlashToggleTime > OFFSET_FLASH_INTERVAL_MS) {
-    g_offsetShowFlash = !g_offsetShowFlash;
-    g_offsetFlashToggleTime = millis();
-  }
-  
-  return g_offsetShowFlash;
+
+  return timeFlashToggle(&g_offsetFlashToggleTime, &g_offsetShowFlash, OFFSET_FLASH_INTERVAL_MS);
 }

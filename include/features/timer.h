@@ -27,6 +27,7 @@ bool timerIsRunning(uint8_t channel);
 bool timerAlarmActive(uint8_t channel);
 bool timerAnyAlarmActive(void);
 bool timerAnyRunning(void);
+bool timerAlarmToneOn(void);
 
 void timerAcknowledgeAllAlarms(void);
 

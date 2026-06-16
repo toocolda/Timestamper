@@ -13,6 +13,9 @@ public:
   void clear();
   void setCursor(uint8_t col, uint8_t row);
   void print(const char* str);
+  void print(const __FlashStringHelper* str);
+  void busAcquire();
+  void busRelease();
 
 private:
   uint8_t _addr;

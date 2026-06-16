@@ -43,25 +43,58 @@
 
 // ===== GPIO Pin Assignments =====
 // Encoder & buttons
-#define PIN_ENC_A 2
-#define PIN_ENC_B 3
-#define PIN_ENC_BTN 4
-#define PIN_BTN_LEFT 5
-#define PIN_BTN_RIGHT 6
-#define PIN_BTN_TOP 7
+#define PIN_ENC_A PIN_PE1
+#define PIN_ENC_B PIN_PE0
+#define PIN_ENC_BTN PIN_PD4
+#define PIN_BTN_LEFT PIN_PD6
+#define PIN_BTN_RIGHT PIN_PD5
+#define PIN_BTN_TOP PIN_PD3
 
 // Outputs
-#define PIN_BUZZER 9
-#define PIN_LCD_RESET 10
-#define PIN_BACKLIGHT_BLUE A3
-#define PIN_BACKLIGHT_RED A1
-#define PIN_BACKLIGHT_GREEN A2
+#define PIN_GPS_POWER PIN_PC1    // Active LOW (AO3407 high-side GPS power)
+#define PIN_BUZZER PIN_PD7
+#define PIN_LCD_RESET PIN_PC3
+#define PIN_BACKLIGHT_RED PIN_PB2
+#define PIN_BACKLIGHT_GREEN PIN_PB1
+#define PIN_BACKLIGHT_BLUE PIN_PB0
+#define PIN_GPS_ENABLE PIN_PC2   // GPS module EN pin
+#define PIN_GPS_PPS PIN_PD2
 
 // ===== ADC Pin Assignments =====
-#define PIN_BATTERY A0
+#define PIN_BATTERY PIN_PC0
+
+// ===== Battery Measurement Mode =====
+// 1: Battery pack directly powers MCU Vcc; battery voltage estimated from
+//    internal bandgap vs AVcc.
+// 0: Battery measured on PIN_BATTERY divider using regulated AVcc reference.
+#define BATTERY_MEASURE_VIA_VCC 0
+
+// ADC reference used in divider mode when AVcc is regulated independently.
+#define BATTERY_ADC_REF_MV 3300U
 
 // ===== GPS Serial =====
 #define GPS_BAUD 9600
+#define GPS_UART_ENABLED 1
+
+// ===== GPS PPS Discipline =====
+// Enable PPS-based crystal drift estimation while GPS is on (best in GPS Info mode).
+#define GPS_PPS_DISCIPLINE_ENABLED 0
+// Averaging window (in PPS intervals) for ppm estimate smoothing.
+#define GPS_PPS_DISCIPLINE_WINDOW 16
+// Minimum spacing between automatic time sync commits in GPS Info mode.
+#define GPS_INFO_AUTO_SYNC_MIN_MS 600000
+
+// ===== GPS Boot Control =====
+#define GPS_POWER_DEFAULT_ON 1
+#define GPS_ENABLE_DEFAULT_ON 1
+
+// ===== Active-Mode Power Gating =====
+// Gate otherwise-idle peripherals during normal operation to cut active-mode
+// current without changing UI behavior.
+#define POWER_GATE_SPI_UNUSED 1
+#define POWER_GATE_USART0_WITH_GPS 1
+#define POWER_GATE_TWI_BETWEEN_LCD_WRITES 1
+#define POWER_GATE_TIMER1_WITH_BUZZER 1
 
 // ===== Encoder Quadrature =====
 #define ENC_DIVISOR 2  // Count per half-step

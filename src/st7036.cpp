@@ -1,22 +1,56 @@
 #include "display/st7036.h"
 
+static void st7036SetTwiEnabled(bool enabled) {
+#if POWER_GATE_TWI_BETWEEN_LCD_WRITES
+#if defined(PRR)
+#if defined(PRTWI)
+    if (enabled) PRR &= (uint8_t)~_BV(PRTWI);
+    else PRR |= _BV(PRTWI);
+#endif
+#elif defined(PRR0)
+#if defined(PRTWI0)
+    if (enabled) PRR0 &= (uint8_t)~_BV(PRTWI0);
+    else PRR0 |= _BV(PRTWI0);
+#elif defined(PRTWI)
+    if (enabled) PRR0 &= (uint8_t)~_BV(PRTWI);
+    else PRR0 |= _BV(PRTWI);
+#endif
+#endif
+#else
+    (void)enabled;
+#endif
+}
+
 ST7036::ST7036(uint8_t addr) : _addr(addr) {}
 
+void ST7036::busAcquire() {
+        st7036SetTwiEnabled(true);
+}
+
+void ST7036::busRelease() {
+        st7036SetTwiEnabled(false);
+}
+
 void ST7036::cmd(uint8_t c) {
+        busAcquire();
     Wire.beginTransmission(_addr);
     Wire.write(LCD_I2C_CMD_MODE);
     Wire.write(c);
     Wire.endTransmission();
+        busRelease();
 }
 
 void ST7036::data(uint8_t d) {
+        busAcquire();
     Wire.beginTransmission(_addr);
     Wire.write(LCD_I2C_DATA_MODE);
     Wire.write(d);
     Wire.endTransmission();
+        busRelease();
 }
 
 void ST7036::begin() {
+        busAcquire();
     delay(LCD_INIT_DELAY_1);
 
     cmd(LCD_CMD_FUNC_SET);
@@ -31,6 +65,7 @@ void ST7036::begin() {
     cmd(LCD_CMD_DISPLAY_ON);
     cmd(LCD_CMD_CLEAR);
     delay(LCD_CLEAR_DELAY);
+    busRelease();
 }
 
 void ST7036::clear() {
@@ -46,5 +81,14 @@ void ST7036::setCursor(uint8_t col, uint8_t row) {
 void ST7036::print(const char* str) {
     while (*str) {
         data(*str++);
+    }
+}
+
+void ST7036::print(const __FlashStringHelper* str) {
+    PGM_P p = reinterpret_cast<PGM_P>(str);
+    char c = pgm_read_byte(p++);
+    while (c != '\0') {
+        data((uint8_t)c);
+        c = pgm_read_byte(p++);
     }
 }
