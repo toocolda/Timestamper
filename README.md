@@ -270,4 +270,4 @@ GPS freshness policy:
 
 ## License
 
-No license file is currently included in this repository. Add one if you plan to publish/distribute.
+This project is licensed under the MIT License. See the LICENSE file for details.
