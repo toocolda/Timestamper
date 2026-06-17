@@ -2,9 +2,15 @@
 
 #include <stdint.h>
 
+#include "core/settings.h"
+
 // Timer1-based buzzer driver on OC1A (ATmega328P pin 9).
 // Keeps Timer2 free for asynchronous 32.768 kHz crystal timekeeping.
 void buzzerInit(uint8_t pin);
 void buzzerStart(uint16_t frequencyHz);
 void buzzerStartWithDuty(uint16_t frequencyHz, uint8_t dutyPercent);
 void buzzerStop(void);
+void buzzerSetMode(BuzzerModeSetting mode);
+BuzzerModeSetting buzzerGetMode(void);
+bool buzzerAllowsUi(void);
+bool buzzerAllowsAlarm(void);

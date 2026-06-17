@@ -7,6 +7,7 @@
 #include "hardware/buttons.h"
 #include "core/modes.h"
 #include "core/config.h"
+#include "core/settings.h"
 #include "time/local_time.h"
 #include "time/mcu_time.h"
 #include "time/time_utils.h"
@@ -24,7 +25,8 @@
 // - Owns button event routing for mode-specific behavior
 
 // Firmware version
-static const char kFirmwareVersion[] = "v0.0.2  20260615";
+static const char kFirmwareVersion[] = "v0.02";
+static const char kFirmwareDate[] = "20260617";
 
 // Forward declarations from main.cpp
 extern ST7036 lcd;
@@ -226,11 +228,27 @@ static void buildUtcEditStatusLine(char out[LCD_BUF_SIZE], uint8_t batteryPercen
   *p = '\0';
 }
 
-static void buildUtcFirmwareLine(char out[LCD_BUF_SIZE]) {
-  char* p = out;
-  p = appendText(p, "FW: ");
-  p = appendText(p, kFirmwareVersion);
-  *p = '\0';
+static void buildMenuLine(char out[LCD_BUF_SIZE], bool selected, const char* label, const char* value) {
+  memset(out, ' ', LCD_COLS);
+  out[0] = selected ? '>' : ' ';
+
+  uint8_t pos = 1;
+  if (label != nullptr) {
+    while (*label != '\0' && pos < LCD_COLS) {
+      out[pos++] = *label++;
+    }
+  }
+
+  if (value != nullptr) {
+    uint8_t valueLen = (uint8_t)strlen(value);
+    if (valueLen > LCD_COLS - 1U) valueLen = (uint8_t)(LCD_COLS - 1U);
+    uint8_t valueStart = (uint8_t)(LCD_COLS - valueLen);
+    for (uint8_t i = 0; i < valueLen; ++i) {
+      out[valueStart + i] = value[i];
+    }
+  }
+
+  out[LCD_COLS] = '\0';
 }
 
 static void buildUtcSyncSearchLine(char out[LCD_BUF_SIZE], uint16_t remaining, uint8_t batteryPercent) {
@@ -397,6 +415,7 @@ static void buzzerCueStop() {
 }
 
 static void buzzSingle(uint16_t durationMs, uint16_t frequencyHz, uint8_t dutyPercent) {
+  if (!buzzerAllowsUi()) return;
   if (timerAnyAlarmActive()) return;
   s_buzzerCue = BUZZ_CUE_SINGLE;
   s_buzzerCueStep = 0;
@@ -418,6 +437,7 @@ static void buzzControlResetEdit() {
 }
 
 static void buzzTimestampStamp() {
+  if (!buzzerAllowsUi()) return;
   if (timerAnyAlarmActive()) return;
   s_buzzerCue = BUZZ_CUE_TIMESTAMP;
   s_buzzerCueStep = 0;
@@ -535,7 +555,132 @@ bool isGPSTimeReliable() {
 }
 
 // ===== Mode: UTC Only State =====
-static bool s_utcShowFirmware = false;
+enum UtcSettingsItem : uint8_t {
+  UTC_SETTINGS_BACKLIGHT = 0,
+  UTC_SETTINGS_BUZZER,
+  UTC_SETTINGS_TIMER_PRESET,
+  UTC_SETTINGS_GPS_AUTO_SYNC,
+  UTC_SETTINGS_FIRMWARE,
+  UTC_SETTINGS_BUILD_DATE,
+  UTC_SETTINGS_COUNT
+};
+
+static bool s_utcSettingsActive = false;
+static uint8_t s_utcSettingsSelected = 0;
+
+static const char* utcSettingsBacklightValue(void) {
+  switch (settingsGetBacklightAutoOff()) {
+    case BACKLIGHT_AUTO_OFF_OFF: return "NEVER";
+    case BACKLIGHT_AUTO_OFF_10S: return "10s";
+    case BACKLIGHT_AUTO_OFF_30S: return "30s";
+    case BACKLIGHT_AUTO_OFF_60S: return "60s";
+    default: return "30s";
+  }
+}
+
+static const char* utcSettingsBuzzerValue(void) {
+  switch (settingsGetBuzzerMode()) {
+    case BUZZER_MODE_OFF: return "OFF";
+    case BUZZER_MODE_ALARMS_ONLY: return "ALRMS ONLY";
+    case BUZZER_MODE_ALL: return "ALL";
+    default: return "ALL";
+  }
+}
+
+static const char* utcSettingsTimerPresetValue(void) {
+  switch (settingsGetTimerPreset()) {
+    case TIMER_PRESET_00_00_00: return "00mins";
+    case TIMER_PRESET_00_30_00: return "30mins";
+    case TIMER_PRESET_01_00_00: return "60mins";
+    default: return "00mins";
+  }
+}
+
+static const char* utcSettingsGpsAutoSyncValue(void) {
+  switch (settingsGetGpsAutoSync()) {
+    case GPS_AUTO_SYNC_OFF: return "OFF";
+    case GPS_AUTO_SYNC_12H: return "12H";
+    case GPS_AUTO_SYNC_24H: return "24H";
+    case GPS_AUTO_SYNC_WEEK: return "WEEK";
+    default: return "OFF";
+  }
+}
+
+static void utcSettingsDescribe(uint8_t item, const char** label, const char** value) {
+  if (label == nullptr || value == nullptr) return;
+
+  switch (item) {
+    case UTC_SETTINGS_BACKLIGHT:
+      *label = "Bklt TO";
+      *value = utcSettingsBacklightValue();
+      break;
+    case UTC_SETTINGS_BUZZER:
+      *label = "Buzzer";
+      *value = utcSettingsBuzzerValue();
+      break;
+    case UTC_SETTINGS_TIMER_PRESET:
+      *label = "Timer Def";
+      *value = utcSettingsTimerPresetValue();
+      break;
+    case UTC_SETTINGS_GPS_AUTO_SYNC:
+      *label = "AUTO SYNC";
+      *value = utcSettingsGpsAutoSyncValue();
+      break;
+    case UTC_SETTINGS_FIRMWARE:
+      *label = "FW";
+      *value = kFirmwareVersion;
+      break;
+    case UTC_SETTINGS_BUILD_DATE:
+      *label = "Build";
+      *value = kFirmwareDate;
+      break;
+    default:
+      *label = "";
+      *value = nullptr;
+      break;
+  }
+}
+
+static void utcSettingsToggleSelected() {
+  switch (s_utcSettingsSelected) {
+    case UTC_SETTINGS_BACKLIGHT:
+      settingsCycleBacklightAutoOff();
+      backlightSetManualTimeoutMs(settingsGetBacklightAutoOffMs());
+      break;
+    case UTC_SETTINGS_BUZZER:
+      settingsCycleBuzzerMode();
+      buzzerSetMode(settingsGetBuzzerMode());
+      break;
+    case UTC_SETTINGS_TIMER_PRESET:
+      settingsCycleTimerPreset();
+      timerApplyDefaultPreset();
+      break;
+    case UTC_SETTINGS_GPS_AUTO_SYNC:
+      settingsCycleGpsAutoSync();
+      break;
+    default:
+      break;
+  }
+  g_modeEpoch++;
+}
+
+bool utcSettingsIsActive(void) {
+  return s_utcSettingsActive;
+}
+
+void utcSettingsScrollBy(int32_t delta) {
+  if (!s_utcSettingsActive || delta == 0) return;
+
+  int16_t idx = (int16_t)s_utcSettingsSelected + (delta > 0 ? 1 : -1);
+  if (idx < 0) idx = 0;
+  if (idx >= (int16_t)UTC_SETTINGS_COUNT) idx = (int16_t)UTC_SETTINGS_COUNT - 1;
+
+  uint8_t next = (uint8_t)idx;
+  if (next != s_utcSettingsSelected) {
+    s_utcSettingsSelected = next;
+    g_modeEpoch++;
+  }
+}
 
 // ===== Mode: UTC Only =====
 void displayModeUTCOnly() {
@@ -543,11 +688,16 @@ void displayModeUTCOnly() {
   static bool lastTimeValid = false;
   static uint32_t lastEpoch = 0;
   static bool lastEditMode = false;
+  static bool lastSettingsMode = false;
   static uint16_t lastSyncElapsed = 0xFFFFU;
   static bool lastSyncSearching = false;
   static GpsSyncResult lastSyncResult = GPS_SYNC_RESULT_NONE;
   static uint16_t lastSyncAge = 0xFFFFU;
-  static bool lastShowFirmware = false;
+  static uint8_t lastSettingsSelected = 0xFFU;
+  static BacklightAutoOffSetting lastBacklightSetting = BACKLIGHT_AUTO_OFF_COUNT;
+  static BuzzerModeSetting lastBuzzerMode = BUZZER_MODE_COUNT;
+  static TimerPresetSetting lastTimerPreset = TIMER_PRESET_COUNT;
+  static GpsAutoSyncSetting lastGpsAutoSync = GPS_AUTO_SYNC_COUNT;
   
   // Reset cache if mode changed
   if (lastEpoch != g_modeEpoch) {
@@ -555,15 +705,21 @@ void displayModeUTCOnly() {
     lastTimeValid = false;
     lastEpoch = g_modeEpoch;
     lastEditMode = false;
+    lastSettingsMode = false;
     lastSyncElapsed = 0xFFFFU;
     lastSyncSearching = false;
     lastSyncResult = GPS_SYNC_RESULT_NONE;
     lastSyncAge = 0xFFFFU;
-    lastShowFirmware = false;
+    lastSettingsSelected = 0xFFU;
+    lastBacklightSetting = BACKLIGHT_AUTO_OFF_COUNT;
+    lastBuzzerMode = BUZZER_MODE_COUNT;
+    lastTimerPreset = TIMER_PRESET_COUNT;
+    lastGpsAutoSync = GPS_AUTO_SYNC_COUNT;
     lcd.clear();
   }
   
   bool editMode = timeEditIsActive();
+  bool settingsMode = s_utcSettingsActive;
   
   // If entering/exiting edit mode, clear display and reset cache
   if (editMode != lastEditMode) {
@@ -571,6 +727,19 @@ void displayModeUTCOnly() {
     lastEditMode = editMode;
     if (!editMode) {
       // Just exited edit mode - reset display cache to force redraw
+      lastSec = -1;
+      lastTimeValid = false;
+      lastSyncElapsed = 0xFFFFU;
+      lastSyncSearching = false;
+      lastSyncResult = GPS_SYNC_RESULT_NONE;
+      lastSyncAge = 0xFFFFU;
+    }
+  }
+
+  if (settingsMode != lastSettingsMode) {
+    lcd.clear();
+    lastSettingsMode = settingsMode;
+    if (!settingsMode) {
       lastSec = -1;
       lastTimeValid = false;
       lastSyncElapsed = 0xFFFFU;
@@ -631,7 +800,51 @@ void displayModeUTCOnly() {
     uint8_t batPercent = batteryGetPercentage();
     buildUtcEditStatusLine(buf, batPercent);
     lcd.print(buf);
-    
+  } else if (settingsMode) {
+    BacklightAutoOffSetting backlightSetting = settingsGetBacklightAutoOff();
+    BuzzerModeSetting buzzerMode = settingsGetBuzzerMode();
+    TimerPresetSetting timerPreset = settingsGetTimerPreset();
+    GpsAutoSyncSetting gpsAutoSync = settingsGetGpsAutoSync();
+
+    if (s_utcSettingsSelected != lastSettingsSelected ||
+        backlightSetting != lastBacklightSetting ||
+        buzzerMode != lastBuzzerMode ||
+        timerPreset != lastTimerPreset ||
+        gpsAutoSync != lastGpsAutoSync) {
+      uint8_t topIndex = (s_utcSettingsSelected == 0U)
+        ? 0U
+        : (uint8_t)(s_utcSettingsSelected - 1U);
+      uint8_t selectedRow = (s_utcSettingsSelected == 0U) ? 0U : 1U;
+
+      char line1[LCD_BUF_SIZE];
+      char line2[LCD_BUF_SIZE];
+
+      const char* line1Label = nullptr;
+      const char* line1Value = nullptr;
+      const char* line2Label = nullptr;
+      const char* line2Value = nullptr;
+      utcSettingsDescribe(topIndex, &line1Label, &line1Value);
+      if ((topIndex + 1U) < UTC_SETTINGS_COUNT) {
+        utcSettingsDescribe((uint8_t)(topIndex + 1U), &line2Label, &line2Value);
+      } else {
+        line2Label = "";
+        line2Value = nullptr;
+      }
+
+      buildMenuLine(line1, selectedRow == 0U, line1Label, line1Value);
+      buildMenuLine(line2, selectedRow == 1U, line2Label, line2Value);
+
+      lcd.setCursor(0, 0);
+      lcd.print(line1);
+      lcd.setCursor(0, 1);
+      lcd.print(line2);
+
+      lastSettingsSelected = s_utcSettingsSelected;
+      lastBacklightSetting = backlightSetting;
+      lastBuzzerMode = buzzerMode;
+      lastTimerPreset = timerPreset;
+      lastGpsAutoSync = gpsAutoSync;
+    }
   } else {
     // ===== NORMAL DISPLAY - Uses MCU time (ticks independently) =====
     bool timeValid = isGPSTimeReliable();
@@ -647,7 +860,7 @@ void displayModeUTCOnly() {
 
     if (s != lastSec || timeValid != lastTimeValid ||
       syncSearching != lastSyncSearching || syncElapsed != lastSyncElapsed ||
-      syncResult != lastSyncResult || syncAge != lastSyncAge || s_utcShowFirmware != lastShowFirmware) {
+      syncResult != lastSyncResult || syncAge != lastSyncAge) {
       lcd.setCursor(0, 0);
       
       char buf[LCD_BUF_SIZE];
@@ -662,21 +875,20 @@ void displayModeUTCOnly() {
       
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
-      
-      if (s_utcShowFirmware) {
-        buildUtcFirmwareLine(buf2);
+
+      if (syncSearching) {
+        uint8_t batPercent = batteryGetPercentage();
+        uint16_t remain = gpsSyncGetRemainingSeconds();
+        buildUtcSyncSearchLine(buf2, remain, batPercent);
+      } else if (syncResult == GPS_SYNC_RESULT_OK) {
+        uint8_t batPercent = batteryGetPercentage();
+        buildUtcSyncOkLine(buf2, syncAge, batPercent);
+      } else if (syncResult == GPS_SYNC_RESULT_TIMEOUT) {
+        uint8_t batPercent = batteryGetPercentage();
+        buildUtcSyncTimeoutLine(buf2, batPercent);
       } else {
         uint8_t batPercent = batteryGetPercentage();
-        if (syncSearching) {
-          uint16_t remain = gpsSyncGetRemainingSeconds();
-          buildUtcSyncSearchLine(buf2, remain, batPercent);
-        } else if (syncResult == GPS_SYNC_RESULT_OK) {
-          buildUtcSyncOkLine(buf2, syncAge, batPercent);
-        } else if (syncResult == GPS_SYNC_RESULT_TIMEOUT) {
-          buildUtcSyncTimeoutLine(buf2, batPercent);
-        } else {
-          buildUtcSyncNoneLine(buf2, batPercent);
-        }
+        buildUtcSyncNoneLine(buf2, batPercent);
       }
       lcd.print(buf2);
       
@@ -686,7 +898,6 @@ void displayModeUTCOnly() {
       lastSyncElapsed = syncElapsed;
       lastSyncResult = syncResult;
       lastSyncAge = syncAge;
-      lastShowFirmware = s_utcShowFirmware;
     }
   }
 }
@@ -1404,13 +1615,21 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
   }
 
   if (mode == MODE_UTC_ONLY) {
-    if (event == BUTTON_ENC_LONG) {
+    if (s_utcSettingsActive) {
+      if (event == BUTTON_LEFT_LONG) {
+        s_utcSettingsActive = false;
+        g_modeEpoch++;
+      } else if (event == BUTTON_ENC_SHORT || event == BUTTON_RIGHT_SHORT) {
+        utcSettingsToggleSelected();
+      }
+    } else if (event == BUTTON_ENC_LONG) {
       TimeEdit_t currentTime = mcuTimeGetCurrent();
       timeEditStart(&currentTime);
     } else if (event == BUTTON_RIGHT_LONG && !timeEditIsActive()) {
       gpsSyncRequest();
     } else if (event == BUTTON_LEFT_LONG) {
-      s_utcShowFirmware = !s_utcShowFirmware;
+      s_utcSettingsActive = true;
+      s_utcSettingsSelected = UTC_SETTINGS_BUZZER;
       g_modeEpoch++;
     } else if (event == BUTTON_RIGHT_SHORT && timeEditIsActive()) {
       timeEditStop();

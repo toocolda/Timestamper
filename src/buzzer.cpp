@@ -5,6 +5,7 @@
 
 static uint8_t s_buzzerPin = 255;
 static const uint8_t kBuzzerDutyPercent = 18;
+static BuzzerModeSetting s_buzzerMode = BUZZER_MODE_ALL;
 
 static void buzzerSetTimer1Enabled(bool enabled) {
 #if POWER_GATE_TIMER1_WITH_BUZZER
@@ -121,4 +122,24 @@ void buzzerStop(void) {
   if (s_buzzerPin != 255) {
     digitalWrite(s_buzzerPin, LOW);
   }
+}
+
+void buzzerSetMode(BuzzerModeSetting mode) {
+  if (mode >= BUZZER_MODE_COUNT) return;
+  if (mode != s_buzzerMode) {
+    buzzerStop();
+  }
+  s_buzzerMode = mode;
+}
+
+BuzzerModeSetting buzzerGetMode(void) {
+  return s_buzzerMode;
+}
+
+bool buzzerAllowsUi(void) {
+  return s_buzzerMode == BUZZER_MODE_ALL;
+}
+
+bool buzzerAllowsAlarm(void) {
+  return s_buzzerMode == BUZZER_MODE_ALARMS_ONLY || s_buzzerMode == BUZZER_MODE_ALL;
 }

@@ -58,3 +58,7 @@ void buzzOnce(uint16_t durationMs);
 // ===== Timestamp Mode Helpers =====
 bool timestampModeIsScrollActive(void);
 void timestampModeScrollBy(int32_t delta);
+
+// ===== UTC Settings Menu Helpers =====
+bool utcSettingsIsActive(void);
+void utcSettingsScrollBy(int32_t delta);

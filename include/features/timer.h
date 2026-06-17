@@ -51,6 +51,7 @@ void timerToggleSelected(void);
 
 void timerStartStopToggle(uint8_t channel);
 void timerReset(uint8_t channel);
+void timerApplyDefaultPreset(void);
 
 // ===== Edit Mode =====
 

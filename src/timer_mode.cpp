@@ -1,12 +1,18 @@
 #include <Arduino.h>
 #include "core/config.h"
+#include "core/settings.h"
 #include "features/timer.h"
 #include "hardware/buzzer.h"
 #include "time/crystal_time.h"
 
 static const int32_t kMaxSeconds = 99L * 3600L + 59L * 60L + 59L;
-static const int32_t kDefaultPresetSeconds = 0L;  // FUEL TIMER default = 00:00:00
 static const uint32_t kAlarmAutoClearMs = 5000;
+
+static int32_t timerDefaultPresetSeconds(void) {
+  uint32_t preset = settingsGetTimerPresetSeconds();
+  if (preset > (uint32_t)kMaxSeconds) preset = (uint32_t)kMaxSeconds;
+  return (int32_t)preset;
+}
 
 struct TimerChannel {
   bool running;
@@ -18,7 +24,7 @@ struct TimerChannel {
   uint32_t alarmStartedMs;
 };
 
-static TimerChannel g_timer = {false, kDefaultPresetSeconds, kDefaultPresetSeconds, 0, false, false, 0};
+static TimerChannel g_timer = {false, 0, 0, 0, false, false, 0};
 
 // Timer edit state (for selected channel): HH -> MM -> SS
 static bool g_timerEditActive = false;
@@ -72,6 +78,14 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
     }
     g_alarmStep = 0;
     g_alarmLastStepMs = crystalTimeGetMillis();
+    return;
+  }
+
+  if (!buzzerAllowsAlarm()) {
+    if (g_alarmToneOn) {
+      buzzerStop();
+      g_alarmToneOn = false;
+    }
     return;
   }
 
@@ -178,12 +192,19 @@ void timerReset(uint8_t index) {
     g_timerEditField = TIMER_EDIT_NONE;
   }
   g_timer.running = false;
-  g_timer.pausedSignedSeconds = kDefaultPresetSeconds;
-  g_timer.runStartSignedSeconds = kDefaultPresetSeconds;
+  g_timer.pausedSignedSeconds = timerDefaultPresetSeconds();
+  g_timer.runStartSignedSeconds = g_timer.pausedSignedSeconds;
   g_timer.runStartTicks256 = 0;
   g_timer.alarmActive = false;
   g_timer.alarmTriggered = false;
   g_timer.alarmStartedMs = 0;
+}
+
+void timerApplyDefaultPreset(void) {
+  if (g_timer.running || g_timerEditActive) return;
+  g_timer.pausedSignedSeconds = timerDefaultPresetSeconds();
+  g_timer.runStartSignedSeconds = g_timer.pausedSignedSeconds;
+  g_timer.runStartTicks256 = 0;
 }
 
 bool timerIsRunning(uint8_t index) {

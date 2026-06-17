@@ -37,6 +37,9 @@ void backlightTriggerTimestamp(void);
  */
 void backlightToggle(void);
 
+void backlightSetManualTimeoutMs(uint32_t timeoutMs);
+uint32_t backlightGetManualTimeoutMs(void);
+
 /**
  * Check if backlight is currently active/blinking
  * @return true if timer alarm or timestamp blink is active

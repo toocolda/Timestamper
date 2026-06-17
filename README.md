@@ -111,7 +111,7 @@ Mode index order:
 Display:
 
 - Line 1: UTC date/time (or placeholder if no valid time)
-- Line 2: sync status and battery, or firmware line when toggled
+- Line 2: sync status and battery
 
 Controls:
 
@@ -119,7 +119,22 @@ Controls:
 - Encoder short (while editing): move to next field
 - Right short (while editing): save and exit edit
 - Right long (not editing): request GPS sync
-- Left long: toggle firmware line on/off
+- Left long: open the UTC settings menu
+
+UTC settings menu:
+
+- Rotate encoder: move up/down the menu
+- Encoder short or right short: change the selected setting
+- Left long: exit settings and return to UTC Only
+
+Current UTC settings:
+
+- Backlight auto-off: `OFF`, `10s`, `30s`, `60s`
+- Buzzer: `OFF`, `ALRMS ONLY`, `ALL`
+- Timer preset: `00:00:00`, `00:30:00`, `01:00:00`
+- GPS auto sync: `OFF`, `12H`, `24H`, `WEEK`
+- Firmware version display
+- Build date display
 
 Notes:
 
@@ -200,6 +215,7 @@ Alarm behavior:
 - Alarm activates at countdown completion
 - Alarm auto-clears after a short timeout
 - Any button or encoder movement acknowledges alarm
+- Reset returns to the configured timer preset
 
 ### 6) Local Only (Desk Mode)
 
@@ -245,6 +261,7 @@ GPS freshness policy:
 - On boot, firmware requests GPS sync automatically
 - Manual sync can be requested from UTC Only mode (right long)
 - GPS sync timeout is currently 120 seconds
+- Optional automatic GPS resync can be set to `12H`, `24H`, `WEEK`, or `OFF`
 
 ## Power Strategy (High Level)
 
@@ -267,6 +284,7 @@ GPS freshness policy:
 - Timestamp capture uses the current maintained clock value, not raw GPS parser timestamp
 - Battery percentage display is primarily surfaced in UTC Only mode
 - GPS PPS discipline is currently disabled by default in config
+- Settings are stored in EEPROM and persist across power cycles
 
 ## License
 

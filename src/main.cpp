@@ -6,6 +6,7 @@
 #include <avr/wdt.h>
 #include "display/st7036.h"
 #include "core/config.h"
+#include "core/settings.h"
 #include "core/modes.h"
 #include "hardware/buttons.h"
 #include "time/time_edit.h"
@@ -230,6 +231,18 @@ static void gpsInfoPpsDisciplineAndAutoSyncUpdate() {
 
 static uint8_t s_gpsCfgAttempts = 0;
 static uint32_t s_gpsCfgNextAttemptMs = 1000;
+
+static void gpsAutoSyncMaybeRequest() {
+  uint32_t intervalMs = settingsGetGpsAutoSyncIntervalMs();
+  if (intervalMs == 0UL) return;
+  if (gpsSyncIsSearching()) return;
+  if (timeEditIsActive() || offsetEditIsActive() || timerEditIsActive() || utcSettingsIsActive()) return;
+  if (s_gpsSyncLastResult == GPS_SYNC_RESULT_NONE) return;
+
+  if (crystalTimeElapsedMs(s_gpsSyncLastResultMs, intervalMs)) {
+    gpsSyncRequest();
+  }
+}
 
 static void spiSetEnabled(bool enabled) {
 #if POWER_GATE_SPI_UNUSED
@@ -603,7 +616,7 @@ static void deskDisableWakePinChange() {
 }
 
 static bool deskSleepShouldRun() {
-  bool noManualEdit = !timeEditIsActive() && !offsetEditIsActive() && !timerEditIsActive();
+  bool noManualEdit = !timeEditIsActive() && !offsetEditIsActive() && !timerEditIsActive() && !utcSettingsIsActive();
   bool noTimerActivity = !timerAnyRunning() && !timerAnyAlarmActive();
   bool noStopwatchActivity = !stopwatchAnyRunning();
   bool gpsOff = !s_gpsPowerOn;
@@ -806,6 +819,8 @@ void handleEncoder() {
 
 // ===== Setup =====
 void setup() {
+  settingsInit();
+
   // Datasheet §13.10.5 (Watchdog Timer): make sure the WDT is off after reset so
   // it can neither add running current nor reset us out of desk-mode power-save.
   MCUSR &= (uint8_t)~_BV(WDRF);
@@ -878,8 +893,11 @@ void setup() {
   // high-Z when GPS power is off, UART-owned when GPS is on.
 
   buzzerInit(PIN_BUZZER);
+  buzzerSetMode(settingsGetBuzzerMode());
   backlightInit(PIN_BACKLIGHT_BLUE, PIN_BACKLIGHT_RED, PIN_BACKLIGHT_GREEN);
+  backlightSetManualTimeoutMs(settingsGetBacklightAutoOffMs());
   batteryInit(PIN_BATTERY);
+  timerApplyDefaultPreset();
 
 #if defined(ACSR) && defined(ACD)
   // Comparator is unused in this firmware; keep it off for lower baseline current.
@@ -925,6 +943,7 @@ void loop() {
 #endif
 
   gpsSyncUpdate();
+  gpsAutoSyncMaybeRequest();
 
 #if GPS_PPS_DISCIPLINE_ENABLED
   gpsInfoPpsDisciplineAndAutoSyncUpdate();
@@ -975,7 +994,8 @@ void loop() {
   bool isEditingOffset = offsetEditIsActive();
   bool isEditingTimer = timerEditIsActive();
   bool isTimestampScroll = (g_currentMode == MODE_TIMESTAMP_REVIEW) && timestampModeIsScrollActive();
-  bool anyEditing = isEditing || isEditingOffset || isEditingTimer || isTimestampScroll;
+  bool isUtcSettingsMenu = (g_currentMode == MODE_UTC_ONLY) && utcSettingsIsActive();
+  bool anyEditing = isEditing || isEditingOffset || isEditingTimer || isTimestampScroll || isUtcSettingsMenu;
   static bool skipModeChangeOnce = false;  // Skip one mode change iteration after edit exit
 
   // On entry to any edit mode, sync encoder baseline so first delta is zero.
@@ -1016,6 +1036,15 @@ void loop() {
     int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
     if (encDelta != 0) {
       timestampModeScrollBy(encDelta);
+      lastEncoderForEdit = encoderValue / ENC_DIVISOR;
+    }
+    wasEditing = true;
+    skipModeChangeOnce = false;
+  } else if (isUtcSettingsMenu) {
+    // In UTC settings menu: encoder navigates menu items.
+    int32_t encDelta = (encoderValue / ENC_DIVISOR) - lastEncoderForEdit;
+    if (encDelta != 0) {
+      utcSettingsScrollBy(encDelta);
       lastEncoderForEdit = encoderValue / ENC_DIVISOR;
     }
     wasEditing = true;

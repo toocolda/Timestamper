@@ -6,7 +6,6 @@
 // ===== Backlight Configuration =====
 static const uint16_t kTimestampBlinkHalfPeriodMs = 200;   // 200ms on, 200ms off
 static const uint16_t kTimestampBlinkDurationMs   = 2000;  // 2s confirmation blink
-static const uint32_t kManualAutoOffMs            = 30000; // 30s manual auto-off
 static const uint8_t  kBluePwmLevels              = 3;      // Software PWM levels (0..3)
 static const uint16_t kBlueFadeStepMs             = 20;     // ~60ms full fade
 
@@ -25,6 +24,7 @@ static uint32_t s_timestampBlinkStartMs  = 0;
 static bool     s_timestampBlinkActive   = false;
 static bool     s_manualOn               = false;
 static uint32_t s_manualOnUntilMs        = 0;
+static uint32_t s_manualAutoOffMs        = 30000;
 
 static BacklightColor s_colorCurrent     = BL_COLOR_NONE;
 static uint8_t  s_level                  = 0;
@@ -81,7 +81,7 @@ void backlightUpdate() {
   }
   
   // Expire manual-on if auto-off time has passed
-  if (s_manualOn && now >= s_manualOnUntilMs) {
+  if (s_manualOn && s_manualAutoOffMs != 0 && now >= s_manualOnUntilMs) {
     s_manualOn = false;
   }
 
@@ -138,8 +138,25 @@ void backlightToggle() {
     s_manualOn = false;
   } else {
     s_manualOn = true;
-    s_manualOnUntilMs = crystalTimeGetMillis() + kManualAutoOffMs;
+    if (s_manualAutoOffMs != 0) {
+      s_manualOnUntilMs = crystalTimeGetMillis() + s_manualAutoOffMs;
+    }
   }
+}
+
+void backlightSetManualTimeoutMs(uint32_t timeoutMs) {
+  s_manualAutoOffMs = timeoutMs;
+  if (s_manualOn) {
+    if (timeoutMs == 0) {
+      s_manualOnUntilMs = 0;
+    } else {
+      s_manualOnUntilMs = crystalTimeGetMillis() + timeoutMs;
+    }
+  }
+}
+
+uint32_t backlightGetManualTimeoutMs(void) {
+  return s_manualAutoOffMs;
 }
 
 // ===== Query if backlight is currently active =====
