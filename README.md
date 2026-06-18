@@ -1,8 +1,10 @@
-# Flight Watch (ATmega328PB)
+# Timestamper
 
-A compact GPS-capable watch/clock firmware for an ATmega328PB board with a 20x2 ST7036 I2C LCD, rotary encoder, buttons, RGB backlight, buzzer, and battery monitor.
+A compact GPS-capable watch/clock designed for pilot flight training. Might be also useful in other use cases. 
 
-This repository is a PlatformIO project targeting Arduino framework on ATmega328PB at 8 MHz.
+This repository is a PlatformIO project targeting Arduino framework on ATmega328PB at 8 MHz 3.3V.
+
+More info on timestamper.ca
 
 ## Features
 
@@ -24,14 +26,16 @@ Configured in include/core/config.h:
 - CPU clock: 8 MHz
 - Display: ST7036-compatible 20x2 over I2C (address 0x3C)
 - GPS UART: 9600 baud
-- Build/upload toolchain: PlatformIO + USBtiny ISP
+- Build/upload toolchain: PlatformIO + USBtiny ISP + Logic Level Convertor (5V-3.3V)
 
-### Hardware Blocks
+### Hardware Main Blocks/Components
 
-- Input: rotary encoder + encoder push button + left/right/top buttons
-- Output: ST7036 20x2 LCD, RGB backlight, piezo buzzer
-- Time/GNSS: GPS module (UART + enable + power gate + PPS input)
-- Power sensing: battery ADC input
+- MCU: ATMEGA328PB-AU
+- GPS: ATGM336H-5N31
+- Display: NHD-C0220BIZ-FS(RGB)-FBW-3VM
+- User Inputs:
+    Rotary Encoder
+    Push buttons
 
 ### Wiring Table
 
