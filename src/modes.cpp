@@ -661,7 +661,6 @@ static void utcSettingsToggleSelected() {
     default:
       break;
   }
-  g_modeEpoch++;
 }
 
 bool utcSettingsIsActive(void) {
@@ -678,7 +677,6 @@ void utcSettingsScrollBy(int32_t delta) {
   uint8_t next = (uint8_t)idx;
   if (next != s_utcSettingsSelected) {
     s_utcSettingsSelected = next;
-    g_modeEpoch++;
   }
 }
 
@@ -1629,7 +1627,7 @@ void handleModeEvent(uint8_t mode, ButtonEvent_t event) {
       gpsSyncRequest();
     } else if (event == BUTTON_LEFT_LONG) {
       s_utcSettingsActive = true;
-      s_utcSettingsSelected = UTC_SETTINGS_BUZZER;
+      s_utcSettingsSelected = UTC_SETTINGS_BACKLIGHT;
       g_modeEpoch++;
     } else if (event == BUTTON_RIGHT_SHORT && timeEditIsActive()) {
       timeEditStop();
