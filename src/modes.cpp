@@ -181,6 +181,15 @@ static void formatIntRightAligned5(char out[6], int32_t value) {
   }
 }
 
+static void padLcdLine20(char out[LCD_BUF_SIZE]) {
+  uint8_t len = (uint8_t)strlen(out);
+  if (len > LCD_COLS) len = LCD_COLS;
+  for (uint8_t i = len; i < LCD_COLS; ++i) {
+    out[i] = ' ';
+  }
+  out[LCD_COLS] = '\0';
+}
+
 static void buildUtcDateTimeLine(char out[LCD_BUF_SIZE], const TimeEdit_t* t) {
   char* p = out;
   p = appendUint4(p, t->year);
@@ -196,6 +205,7 @@ static void buildUtcDateTimeLine(char out[LCD_BUF_SIZE], const TimeEdit_t* t) {
   p = appendUint2(p, t->second);
   *p++ = 'Z';
   *p = '\0';
+  padLcdLine20(out);
 }
 
 static void buildUtcEditLine(char out[LCD_BUF_SIZE],
@@ -219,13 +229,30 @@ static void buildUtcEditLine(char out[LCD_BUF_SIZE],
   p = appendText(p, secondStr);
   *p++ = 'Z';
   *p = '\0';
+  padLcdLine20(out);
 }
 
-static void buildUtcEditStatusLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
-  char* p = out;
-  p = appendText(p, "EDIT UTC      BAT:");
-  p = appendUint2(p, batteryPercent);
-  *p = '\0';
+static const char* batteryLevelText(BatteryLevel_t level) {
+  switch (level) {
+    case BATTERY_LEVEL_NONE:
+      return "NO";
+    case BATTERY_LEVEL_HIGH:
+      return "HI";
+    case BATTERY_LEVEL_MID:
+      return "MI";
+    case BATTERY_LEVEL_LOW:
+    default:
+      return "LO";
+  }
+}
+
+static void buildUtcEditStatusLine(char out[LCD_BUF_SIZE], BatteryLevel_t batteryLevel) {
+  memset(out, ' ', LCD_COLS);
+  out[LCD_COLS] = '\0';
+
+  memcpy(out, "EDIT UTC", 8);
+  memcpy(&out[14], "BAT:", 4);
+  memcpy(&out[18], batteryLevelText(batteryLevel), 2);
 }
 
 static void buildMenuLine(char out[LCD_BUF_SIZE], bool selected, const char* label, const char* value) {
@@ -251,37 +278,41 @@ static void buildMenuLine(char out[LCD_BUF_SIZE], bool selected, const char* lab
   out[LCD_COLS] = '\0';
 }
 
-static void buildUtcSyncSearchLine(char out[LCD_BUF_SIZE], uint16_t remaining, uint8_t batteryPercent) {
+static void buildUtcSyncSearchLine(char out[LCD_BUF_SIZE], uint16_t remaining, BatteryLevel_t batteryLevel) {
   char* p = out;
   p = appendText(p, "SYNC SRCH ");
   p = appendUint3(p, remaining);
   p = appendText(p, " BAT:");
-  p = appendUint2(p, batteryPercent);
+  p = appendText(p, batteryLevelText(batteryLevel));
   *p = '\0';
+  padLcdLine20(out);
 }
 
-static void buildUtcSyncOkLine(char out[LCD_BUF_SIZE], uint16_t syncAge, uint8_t batteryPercent) {
+static void buildUtcSyncOkLine(char out[LCD_BUF_SIZE], uint16_t syncAge, BatteryLevel_t batteryLevel) {
   char* p = out;
   p = appendText(p, "SYNC OK  ");
   p = appendUint3(p, syncAge);
   *p++ = 's';
   p = appendText(p, " BAT:");
-  p = appendUint2(p, batteryPercent);
+  p = appendText(p, batteryLevelText(batteryLevel));
   *p = '\0';
+  padLcdLine20(out);
 }
 
-static void buildUtcSyncTimeoutLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
+static void buildUtcSyncTimeoutLine(char out[LCD_BUF_SIZE], BatteryLevel_t batteryLevel) {
   char* p = out;
   p = appendText(p, "SYNC TMO TRY  BAT:");
-  p = appendUint2(p, batteryPercent);
+  p = appendText(p, batteryLevelText(batteryLevel));
   *p = '\0';
+  padLcdLine20(out);
 }
 
-static void buildUtcSyncNoneLine(char out[LCD_BUF_SIZE], uint8_t batteryPercent) {
+static void buildUtcSyncNoneLine(char out[LCD_BUF_SIZE], BatteryLevel_t batteryLevel) {
   char* p = out;
   p = appendText(p, "SYNC NO       BAT:");
-  p = appendUint2(p, batteryPercent);
+  p = appendText(p, batteryLevelText(batteryLevel));
   *p = '\0';
+  padLcdLine20(out);
 }
 
 static void formatUtcOffset3(char out[4], int8_t offset, bool blank) {
@@ -316,7 +347,8 @@ static void formatMmDdHhMmSsTail3(char out[LCD_BUF_SIZE], const TimeEdit_t* t, c
   out[16] = tail3[0];
   out[17] = tail3[1];
   out[18] = tail3[2];
-  out[19] = '\0';
+  out[19] = ' ';
+  out[20] = '\0';
 }
 
 static void formatTimestampEmptySelectedLine(char out[LCD_BUF_SIZE], char marker) {
@@ -713,7 +745,6 @@ void displayModeUTCOnly() {
     lastBuzzerMode = BUZZER_MODE_COUNT;
     lastTimerPreset = TIMER_PRESET_COUNT;
     lastGpsAutoSync = GPS_AUTO_SYNC_COUNT;
-    lcd.clear();
   }
   
   bool editMode = timeEditIsActive();
@@ -721,7 +752,6 @@ void displayModeUTCOnly() {
   
   // If entering/exiting edit mode, clear display and reset cache
   if (editMode != lastEditMode) {
-    lcd.clear();
     lastEditMode = editMode;
     if (!editMode) {
       // Just exited edit mode - reset display cache to force redraw
@@ -735,7 +765,6 @@ void displayModeUTCOnly() {
   }
 
   if (settingsMode != lastSettingsMode) {
-    lcd.clear();
     lastSettingsMode = settingsMode;
     if (!settingsMode) {
       lastSec = -1;
@@ -795,8 +824,8 @@ void displayModeUTCOnly() {
     
     // Show GPS status on line 2 as hint (blinking field is visual hint)
     lcd.setCursor(0, 1);
-    uint8_t batPercent = batteryGetPercentage();
-    buildUtcEditStatusLine(buf, batPercent);
+    BatteryLevel_t batLevel = batteryGetLevel();
+    buildUtcEditStatusLine(buf, batLevel);
     lcd.print(buf);
   } else if (settingsMode) {
     BacklightAutoOffSetting backlightSetting = settingsGetBacklightAutoOff();
@@ -873,20 +902,17 @@ void displayModeUTCOnly() {
       
       lcd.setCursor(0, 1);
       char buf2[LCD_BUF_SIZE];
+      BatteryLevel_t batLevel = batteryGetLevel();
 
       if (syncSearching) {
-        uint8_t batPercent = batteryGetPercentage();
         uint16_t remain = gpsSyncGetRemainingSeconds();
-        buildUtcSyncSearchLine(buf2, remain, batPercent);
+        buildUtcSyncSearchLine(buf2, remain, batLevel);
       } else if (syncResult == GPS_SYNC_RESULT_OK) {
-        uint8_t batPercent = batteryGetPercentage();
-        buildUtcSyncOkLine(buf2, syncAge, batPercent);
+        buildUtcSyncOkLine(buf2, syncAge, batLevel);
       } else if (syncResult == GPS_SYNC_RESULT_TIMEOUT) {
-        uint8_t batPercent = batteryGetPercentage();
-        buildUtcSyncTimeoutLine(buf2, batPercent);
+        buildUtcSyncTimeoutLine(buf2, batLevel);
       } else {
-        uint8_t batPercent = batteryGetPercentage();
-        buildUtcSyncNoneLine(buf2, batPercent);
+        buildUtcSyncNoneLine(buf2, batLevel);
       }
       lcd.print(buf2);
       
@@ -917,14 +943,12 @@ void displayModeUTCLocal() {
     lastTimeValid = false;
     lastEpoch = g_modeEpoch;
     lastOffsetEditMode = false;
-    lcd.clear();
   }
   
   bool offsetEditMode = offsetEditIsActive();
   
   // If entering/exiting offset edit mode, clear display and reset cache
   if (offsetEditMode != lastOffsetEditMode) {
-    lcd.clear();
     lastOffsetEditMode = offsetEditMode;
     if (!offsetEditMode) {
       // Just exited edit mode - reset display cache to force redraw
@@ -1050,7 +1074,6 @@ void displayModeTimestampReview() {
   static uint32_t lastSig = 0xFFFFFFFFUL;
 
   if (lastEpoch != g_modeEpoch) {
-    lcd.clear();
     lastEpoch = g_modeEpoch;
     lastSig = 0xFFFFFFFFUL;
   }
@@ -1115,7 +1138,9 @@ void displayModeTimestampReview() {
     formatTimestampEmptySelectedLine(line1, marker);
     lcd.print(line1);
     lcd.setCursor(0, 1);
-    lcd.print(F(" 00 -- -- --:--:-- "));
+    char line2[LCD_BUF_SIZE];
+    formatTimestampEmptySecondLine(line2, ' ', ' ');
+    lcd.print(line2);
     return;
   }
 
@@ -1150,7 +1175,6 @@ void displayModeStopwatch() {
   static bool lastRunning = false;
 
   if (lastEpoch != g_modeEpoch) {
-    lcd.clear();
     lastEpoch = g_modeEpoch;
     lastTenths = 0xFFFFFFFFUL;
     lastRunning = !stopwatchIsRunning(0);  // force redraw below
@@ -1195,7 +1219,6 @@ void displayModeTimer() {
   static uint32_t lastSig = 0xFFFFFFFFUL;
 
   if (lastEpoch != g_modeEpoch) {
-    lcd.clear();
     lastEpoch = g_modeEpoch;
     lastSig = 0xFFFFFFFFUL;
   }
@@ -1308,7 +1331,6 @@ void displayModeLocalOnly() {
   static uint32_t lastSig   = 0xFFFFFFFFUL;
 
   if (lastEpoch != g_modeEpoch) {
-    lcd.clear();
     lastEpoch = g_modeEpoch;
     lastSig   = 0xFFFFFFFFUL;
   }
@@ -1430,7 +1452,6 @@ void displayModeGpsInfo() {
   static uint32_t lastSig = 0xFFFFFFFFUL;
 
   if (lastEpoch != g_modeEpoch) {
-    lcd.clear();
     lastEpoch = g_modeEpoch;
     lastSig = 0xFFFFFFFFUL;
   }

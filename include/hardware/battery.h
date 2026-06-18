@@ -16,6 +16,13 @@
 
 #include <stdint.h>
 
+typedef enum {
+	BATTERY_LEVEL_NONE = 0,
+	BATTERY_LEVEL_LOW,
+	BATTERY_LEVEL_MID,
+	BATTERY_LEVEL_HIGH
+} BatteryLevel_t;
+
 /**
  * Initialize battery monitoring on specified ADC pin
  * @param adcPin Analog input pin for battery voltage (e.g., PIN_BATTERY)
@@ -33,3 +40,9 @@ void batteryUpdate(void);
  * @return Battery percentage, capped at 99 for 2-digit display
  */
 uint8_t batteryGetPercentage(void);
+
+/**
+ * Get coarse battery state for low-churn UI display.
+ * @return BATTERY_LEVEL_LOW, BATTERY_LEVEL_MID, or BATTERY_LEVEL_HIGH
+ */
+BatteryLevel_t batteryGetLevel(void);

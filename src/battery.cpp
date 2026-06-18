@@ -7,28 +7,28 @@
 // ===== Battery Configuration =====
 // Voltage divider: 100K (positive) + 100K (to GND) = 200K total
 // V_out = V_in * (100K / 200K) = V_in * 0.5
-// Battery percentage changes slowly enough that 5 s updates are effectively
-// real-time to the user while cutting repeated ADC/reference wakeups in UTC mode.
-static const uint16_t kBatteryUpdatePeriodMs = 5000;
+// Battery state changes slowly enough that 15 s updates are effectively
+// real-time while reducing repeated ADC/reference wakeups in UTC mode.
+static const uint16_t kBatteryUpdatePeriodMs = 15000;
 
 struct BatteryCurvePoint {
   uint16_t mv;
   uint8_t pct;
 };
 
-// 3xAAA alkaline pack (series) discharge approximation under light/moderate load.
-// Tuned so ~3.3V is effectively empty for this project.
+// 3xAAA NiMH pack (series) discharge approximation under light/moderate load.
+// NiMH has a flatter plateau than alkaline, then a steeper knee near depletion.
 static const BatteryCurvePoint kBatteryCurve[] = {
   {3000, 0},
-  {3200, 5},
-  {3400, 10},
-  {3500, 15},
-  {3600, 16},
-  {3700, 28},
-  {3800, 42},
-  {3900, 58},
-  {4000, 74},
-  {4200, 90},
+  {3300, 3},
+  {3450, 10},
+  {3550, 24},
+  {3650, 42},
+  {3750, 62},
+  {3850, 80},
+  {3950, 91},
+  {4050, 97},
+  {4150, 99},
   {4500, 99}
 };
 
@@ -96,6 +96,37 @@ static uint8_t batteryPercentFromMv(uint16_t batteryMv) {
 static uint8_t s_batteryAdcPin = 0;
 static uint32_t s_lastBatterySampleMs = 0;
 static uint8_t s_batteryPercent = 0;
+static BatteryLevel_t s_batteryLevel = BATTERY_LEVEL_NONE;
+
+static BatteryLevel_t batteryLevelFromMv(uint16_t batteryMv, BatteryLevel_t prev) {
+  // USB-only power (no battery pack) leaves the divider input near 0 mV.
+  // Use hysteresis so intermittent noise does not flap between NO and LOW.
+  static const uint16_t kNoBatteryEnterMv = 600U;
+  static const uint16_t kNoBatteryExitMv = 900U;
+  if (prev == BATTERY_LEVEL_NONE) {
+    if (batteryMv < kNoBatteryExitMv) return BATTERY_LEVEL_NONE;
+  } else {
+    if (batteryMv < kNoBatteryEnterMv) return BATTERY_LEVEL_NONE;
+  }
+
+  // 3S NiMH nominal: ~3.6V plateau. Use hysteresis to prevent flicker near thresholds.
+  switch (prev) {
+    case BATTERY_LEVEL_NONE:
+      // Re-enter from NO only after hysteresis is satisfied above.
+      return BATTERY_LEVEL_LOW;
+    case BATTERY_LEVEL_HIGH:
+      if (batteryMv < 3690U) return BATTERY_LEVEL_MID;
+      return BATTERY_LEVEL_HIGH;
+    case BATTERY_LEVEL_MID:
+      if (batteryMv >= 3750U) return BATTERY_LEVEL_HIGH;
+      if (batteryMv < 3480U) return BATTERY_LEVEL_LOW;
+      return BATTERY_LEVEL_MID;
+    case BATTERY_LEVEL_LOW:
+    default:
+      if (batteryMv >= 3540U) return BATTERY_LEVEL_MID;
+      return BATTERY_LEVEL_LOW;
+  }
+}
 
 // ===== Initialize battery monitoring on specified ADC pin =====
 void batteryInit(uint8_t adcPin) {
@@ -114,6 +145,12 @@ void batteryInit(uint8_t adcPin) {
 void batteryUpdate() {
   if (s_batteryAdcPin == 0) return;  // Not initialized
 
+  uint32_t now = crystalTimeGetMillis();
+  if ((uint32_t)(now - s_lastBatterySampleMs) < kBatteryUpdatePeriodMs) {
+    return;  // Not time to update yet
+  }
+  s_lastBatterySampleMs = now;
+
   // ADC may be power-gated by mode policy; re-enable before sampling.
 #if defined(PRR)
 #if defined(PRADC)
@@ -125,13 +162,7 @@ void batteryUpdate() {
 #endif
 #endif
   ADCSRA |= _BV(ADEN);
-  
-  uint32_t now = crystalTimeGetMillis();
-  if (now - s_lastBatterySampleMs < kBatteryUpdatePeriodMs) {
-    return;  // Not time to update yet
-  }
-  s_lastBatterySampleMs = now;
-  
+
   uint16_t batteryMv = 0;
 
 #if BATTERY_MEASURE_VIA_VCC
@@ -161,9 +192,14 @@ void batteryUpdate() {
   
   // Convert battery voltage using a nonlinear 3xAAA curve and clamp to 0..99 for 2-digit UI.
   s_batteryPercent = batteryPercentFromMv(batteryMv);
+  s_batteryLevel = batteryLevelFromMv(batteryMv, s_batteryLevel);
 }
 
 // ===== Get current battery percentage =====
 uint8_t batteryGetPercentage() {
   return s_batteryPercent;
+}
+
+BatteryLevel_t batteryGetLevel() {
+  return s_batteryLevel;
 }
