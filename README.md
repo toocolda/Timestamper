@@ -4,6 +4,8 @@ A compact GPS-capable watch/clock designed for pilot flight training. Might be a
 
 This repository is a PlatformIO project targeting Arduino framework on ATmega328PB at 8 MHz 3.3V.
 
+Current firmware: v0.03 (build 2026-06-21)
+
 More info on timestamper.ca
 
 ## Features

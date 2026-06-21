@@ -25,8 +25,8 @@
 // - Owns button event routing for mode-specific behavior
 
 // Firmware version
-static const char kFirmwareVersion[] = "v0.02";
-static const char kFirmwareDate[] = "20260617";
+static const char kFirmwareVersion[] = "v0.03";
+static const char kFirmwareDate[] = "20260621";
 
 // Forward declarations from main.cpp
 extern ST7036 lcd;
@@ -292,7 +292,7 @@ static void buildUtcSyncOkLine(char out[LCD_BUF_SIZE], uint16_t syncAge, Battery
   char* p = out;
   p = appendText(p, "SYNC OK  ");
   p = appendUint3(p, syncAge);
-  *p++ = 's';
+  *p++ = 'd';
   p = appendText(p, " BAT:");
   p = appendText(p, batteryLevelText(batteryLevel));
   *p = '\0';
@@ -613,7 +613,7 @@ static const char* utcSettingsBacklightValue(void) {
 static const char* utcSettingsBuzzerValue(void) {
   switch (settingsGetBuzzerMode()) {
     case BUZZER_MODE_OFF: return "OFF";
-    case BUZZER_MODE_ALARMS_ONLY: return "ALRMS ONLY";
+    case BUZZER_MODE_ALARMS_ONLY: return "ALARMS ONLY";
     case BUZZER_MODE_ALL: return "ALL";
     default: return "ALL";
   }
@@ -643,7 +643,7 @@ static void utcSettingsDescribe(uint8_t item, const char** label, const char** v
 
   switch (item) {
     case UTC_SETTINGS_BACKLIGHT:
-      *label = "Bklt TO";
+      *label = "Backlight";
       *value = utcSettingsBacklightValue();
       break;
     case UTC_SETTINGS_BUZZER:
@@ -651,19 +651,19 @@ static void utcSettingsDescribe(uint8_t item, const char** label, const char** v
       *value = utcSettingsBuzzerValue();
       break;
     case UTC_SETTINGS_TIMER_PRESET:
-      *label = "Timer Def";
+      *label = "Timer";
       *value = utcSettingsTimerPresetValue();
       break;
     case UTC_SETTINGS_GPS_AUTO_SYNC:
-      *label = "AUTO SYNC";
+      *label = "GPS Sync";
       *value = utcSettingsGpsAutoSyncValue();
       break;
     case UTC_SETTINGS_FIRMWARE:
-      *label = "FW";
+      *label = "Firmware";
       *value = kFirmwareVersion;
       break;
     case UTC_SETTINGS_BUILD_DATE:
-      *label = "Build";
+      *label = "Build Date";
       *value = kFirmwareDate;
       break;
     default:
@@ -879,7 +879,7 @@ void displayModeUTCOnly() {
     bool syncSearching = gpsSyncIsSearching();
     uint16_t syncElapsed = syncSearching ? gpsSyncGetElapsedSeconds() : 0U;
     GpsSyncResult syncResult = gpsSyncGetLastResult();
-    uint16_t syncAge = gpsSyncGetLastResultAgeSeconds();
+    uint16_t syncAge = gpsSyncGetLastResultAgeDays();
 
     // Get current time from MCU (ticks based on elapsed ms)
     TimeEdit_t currentTime = mcuTimeGetCurrent();
@@ -1124,10 +1124,20 @@ void displayModeTimestampReview() {
   lastSig = sig;
 
   if (s_tsConfirmDeleteAll) {
+    char line1[LCD_BUF_SIZE];
+    memcpy(line1, " Delete ALL stamps? ", 20);
+    line1[LCD_COLS] = '\0';
+    padLcdLine20(line1);
+
+    char line2[LCD_BUF_SIZE];
+    memcpy(line2, " L:Cancel R:Delete ", 19);
+    line2[19] = '\0';
+    padLcdLine20(line2);
+
     lcd.setCursor(0, 0);
-    lcd.print(F(" Delete ALL stamps? "));
+    lcd.print(line1);
     lcd.setCursor(0, 1);
-    lcd.print(F(" L:Cancel R:Delete "));
+    lcd.print(line2);
     return;
   }
 

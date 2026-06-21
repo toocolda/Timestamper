@@ -92,10 +92,9 @@ static void gpsTimeAddOneSecond(TimeEdit_t* t) {
   if (t->month == 4 || t->month == 6 || t->month == 9 || t->month == 11) {
     maxDay = 30;
   } else if (t->month == 2) {
-    maxDay = 28;
-  }
-  if ((t->month == 2) && ((t->year % 4) == 0)) {
-    maxDay = 29;
+    bool isLeap = ((t->year % 400) == 0) ||
+                  (((t->year % 4) == 0) && ((t->year % 100) != 0));
+    maxDay = isLeap ? 29 : 28;
   }
   if (++t->day <= maxDay) return;
   t->day = 1;
@@ -370,12 +369,12 @@ GpsSyncResult gpsSyncGetLastResult(void) {
   return s_gpsSyncLastResult;
 }
 
-uint16_t gpsSyncGetLastResultAgeSeconds(void) {
+uint16_t gpsSyncGetLastResultAgeDays(void) {
   if (s_gpsSyncLastResult == GPS_SYNC_RESULT_NONE) return 0;
   uint32_t ageMs = crystalTimeGetMillis() - s_gpsSyncLastResultMs;
-  uint32_t ageSec = ageMs / 1000UL;
-  if (ageSec > 999U) ageSec = 999U;
-  return (uint16_t)ageSec;
+  uint32_t ageDays = ageMs / 86400000UL;
+  if (ageDays > 999U) ageDays = 999U;
+  return (uint16_t)ageDays;
 }
 
 void gpsSyncClearLastResult(void) {

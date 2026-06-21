@@ -61,6 +61,7 @@ void setUTCOffset(int8_t offset) {
 
 // ===== Calculate Local Time from UTC =====
 TimeEdit_t calculateLocalTime(TimeEdit_t utcTime) {
+  loadUTCOffset();  // Ensure offset is read from EEPROM before first use
   return calculateLocalTimeWithOffset(utcTime, g_utcOffset);
 }
 

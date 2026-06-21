@@ -46,7 +46,7 @@ bool gpsHasFreshFixSincePowerOn(void);
 uint16_t gpsSyncGetRemainingSeconds(void);
 uint16_t gpsSyncGetElapsedSeconds(void);
 GpsSyncResult gpsSyncGetLastResult(void);
-uint16_t gpsSyncGetLastResultAgeSeconds(void);
+uint16_t gpsSyncGetLastResultAgeDays(void);
 void gpsSyncClearLastResult(void);
 
 // ===== Mode State =====

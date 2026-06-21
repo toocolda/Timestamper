@@ -33,6 +33,9 @@ static void loadMeta() {
 
   if (g_count > TIMESTAMP_STORE_MAX) g_count = 0;
   if (g_oldest >= TIMESTAMP_STORE_MAX) g_oldest = 0;
+  // Guard the ring-buffer invariant against partially corrupted EEPROM meta:
+  // the oldest index must point inside the populated range.
+  if (g_count > 0 && g_oldest >= g_count) g_oldest = 0;
 
   g_loaded = true;
 }
