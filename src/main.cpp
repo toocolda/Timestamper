@@ -836,6 +836,7 @@ void setup() {
 
   Wire.begin();
   lcd.begin();
+  lcd.setContrast(settingsGetLcdContrastValue());
   crystalTimeInit();
 
 #if GPS_UART_ENABLED

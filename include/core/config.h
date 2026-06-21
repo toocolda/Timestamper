@@ -24,6 +24,8 @@
 #define LCD_CMD_INTERNAL_OSC 0x14
 #define LCD_CMD_CONTRAST_MAX (0x70 | 0x0F)
 #define LCD_CMD_POWER_CONTRAST 0x56
+#define LCD_CMD_CONTRAST_SET_BASE 0x70    // Contrast Set: OR with C[3:0]
+#define LCD_CMD_POWER_CONTRAST_BASE 0x54  // Power/ICON/Contrast (Bon=1): OR with C[5:4]
 #define LCD_CMD_FOLLOWER 0x6C
 #define LCD_CMD_DISPLAY_ON 0x0C
 #define LCD_CMD_CLEAR 0x01

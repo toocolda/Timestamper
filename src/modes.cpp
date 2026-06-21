@@ -592,6 +592,7 @@ enum UtcSettingsItem : uint8_t {
   UTC_SETTINGS_BUZZER,
   UTC_SETTINGS_TIMER_PRESET,
   UTC_SETTINGS_GPS_AUTO_SYNC,
+  UTC_SETTINGS_CONTRAST,
   UTC_SETTINGS_FIRMWARE,
   UTC_SETTINGS_BUILD_DATE,
   UTC_SETTINGS_COUNT
@@ -638,6 +639,17 @@ static const char* utcSettingsGpsAutoSyncValue(void) {
   }
 }
 
+static const char* utcSettingsContrastValue(void) {
+  switch (settingsGetLcdContrast()) {
+    case LCD_CONTRAST_1: return "1";
+    case LCD_CONTRAST_2: return "2";
+    case LCD_CONTRAST_3: return "3";
+    case LCD_CONTRAST_4: return "4";
+    case LCD_CONTRAST_5: return "5";
+    default: return "3";
+  }
+}
+
 static void utcSettingsDescribe(uint8_t item, const char** label, const char** value) {
   if (label == nullptr || value == nullptr) return;
 
@@ -657,6 +669,10 @@ static void utcSettingsDescribe(uint8_t item, const char** label, const char** v
     case UTC_SETTINGS_GPS_AUTO_SYNC:
       *label = "GPS Sync";
       *value = utcSettingsGpsAutoSyncValue();
+      break;
+    case UTC_SETTINGS_CONTRAST:
+      *label = "Contrast";
+      *value = utcSettingsContrastValue();
       break;
     case UTC_SETTINGS_FIRMWARE:
       *label = "Firmware";
@@ -689,6 +705,10 @@ static void utcSettingsToggleSelected() {
       break;
     case UTC_SETTINGS_GPS_AUTO_SYNC:
       settingsCycleGpsAutoSync();
+      break;
+    case UTC_SETTINGS_CONTRAST:
+      settingsCycleLcdContrast();
+      lcd.setContrast(settingsGetLcdContrastValue());
       break;
     default:
       break;
@@ -728,6 +748,7 @@ void displayModeUTCOnly() {
   static BuzzerModeSetting lastBuzzerMode = BUZZER_MODE_COUNT;
   static TimerPresetSetting lastTimerPreset = TIMER_PRESET_COUNT;
   static GpsAutoSyncSetting lastGpsAutoSync = GPS_AUTO_SYNC_COUNT;
+  static LcdContrastSetting lastLcdContrast = LCD_CONTRAST_COUNT;
   
   // Reset cache if mode changed
   if (lastEpoch != g_modeEpoch) {
@@ -745,6 +766,7 @@ void displayModeUTCOnly() {
     lastBuzzerMode = BUZZER_MODE_COUNT;
     lastTimerPreset = TIMER_PRESET_COUNT;
     lastGpsAutoSync = GPS_AUTO_SYNC_COUNT;
+    lastLcdContrast = LCD_CONTRAST_COUNT;
   }
   
   bool editMode = timeEditIsActive();
@@ -832,12 +854,14 @@ void displayModeUTCOnly() {
     BuzzerModeSetting buzzerMode = settingsGetBuzzerMode();
     TimerPresetSetting timerPreset = settingsGetTimerPreset();
     GpsAutoSyncSetting gpsAutoSync = settingsGetGpsAutoSync();
+    LcdContrastSetting lcdContrast = settingsGetLcdContrast();
 
     if (s_utcSettingsSelected != lastSettingsSelected ||
         backlightSetting != lastBacklightSetting ||
         buzzerMode != lastBuzzerMode ||
         timerPreset != lastTimerPreset ||
-        gpsAutoSync != lastGpsAutoSync) {
+        gpsAutoSync != lastGpsAutoSync ||
+        lcdContrast != lastLcdContrast) {
       uint8_t topIndex = (s_utcSettingsSelected == 0U)
         ? 0U
         : (uint8_t)(s_utcSettingsSelected - 1U);
@@ -871,6 +895,7 @@ void displayModeUTCOnly() {
       lastBuzzerMode = buzzerMode;
       lastTimerPreset = timerPreset;
       lastGpsAutoSync = gpsAutoSync;
+      lastLcdContrast = lcdContrast;
     }
   } else {
     // ===== NORMAL DISPLAY - Uses MCU time (ticks independently) =====

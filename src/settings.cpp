@@ -5,7 +5,7 @@
 
 static const uint8_t kSettingsMagic0 = 0x46;  // 'F'
 static const uint8_t kSettingsMagic1 = 0x57;  // 'W'
-static const uint8_t kSettingsVersion = 2;
+static const uint8_t kSettingsVersion = 3;
 static const int kSettingsBaseAddr = 2 + ((int)TIMESTAMP_STORE_MAX * 6);
 static const int kAddrMagic0 = kSettingsBaseAddr + 0;
 static const int kAddrMagic1 = kSettingsBaseAddr + 1;
@@ -14,12 +14,14 @@ static const int kAddrBacklight = kSettingsBaseAddr + 3;
 static const int kAddrBuzzer = kSettingsBaseAddr + 4;
 static const int kAddrTimerPreset = kSettingsBaseAddr + 5;
 static const int kAddrGpsAutoSync = kSettingsBaseAddr + 6;
+static const int kAddrLcdContrast = kSettingsBaseAddr + 7;
 
 struct SystemSettings {
   BacklightAutoOffSetting backlightAutoOff;
   BuzzerModeSetting buzzerMode;
   TimerPresetSetting timerPreset;
   GpsAutoSyncSetting gpsAutoSync;
+  LcdContrastSetting lcdContrast;
 };
 
 static bool s_loaded = false;
@@ -30,13 +32,15 @@ static void settingsSetDefaults(void) {
   s_settings.buzzerMode = BUZZER_MODE_ALL;
   s_settings.timerPreset = TIMER_PRESET_00_00_00;
   s_settings.gpsAutoSync = GPS_AUTO_SYNC_OFF;
+  s_settings.lcdContrast = LCD_CONTRAST_3;
 }
 
 static bool settingsValuesValid(void) {
   return s_settings.backlightAutoOff < BACKLIGHT_AUTO_OFF_COUNT &&
          s_settings.buzzerMode < BUZZER_MODE_COUNT &&
          s_settings.timerPreset < TIMER_PRESET_COUNT &&
-         s_settings.gpsAutoSync < GPS_AUTO_SYNC_COUNT;
+         s_settings.gpsAutoSync < GPS_AUTO_SYNC_COUNT &&
+         s_settings.lcdContrast < LCD_CONTRAST_COUNT;
 }
 
 static void settingsSave(void) {
@@ -47,6 +51,7 @@ static void settingsSave(void) {
   EEPROM.update(kAddrBuzzer, (uint8_t)s_settings.buzzerMode);
   EEPROM.update(kAddrTimerPreset, (uint8_t)s_settings.timerPreset);
   EEPROM.update(kAddrGpsAutoSync, (uint8_t)s_settings.gpsAutoSync);
+  EEPROM.update(kAddrLcdContrast, (uint8_t)s_settings.lcdContrast);
 }
 
 void settingsInit(void) {
@@ -59,6 +64,7 @@ void settingsInit(void) {
     s_settings.buzzerMode = (BuzzerModeSetting)EEPROM.read(kAddrBuzzer);
     s_settings.timerPreset = (TimerPresetSetting)EEPROM.read(kAddrTimerPreset);
     s_settings.gpsAutoSync = (GpsAutoSyncSetting)EEPROM.read(kAddrGpsAutoSync);
+    s_settings.lcdContrast = (LcdContrastSetting)EEPROM.read(kAddrLcdContrast);
 
     if (!settingsValuesValid()) {
       settingsSetDefaults();
@@ -163,5 +169,31 @@ uint32_t settingsGetGpsAutoSyncIntervalMs(void) {
       return 7UL * 24UL * 60UL * 60UL * 1000UL;
     default:
       return 0UL;
+  }
+}
+
+LcdContrastSetting settingsGetLcdContrast(void) {
+  settingsInit();
+  return s_settings.lcdContrast;
+}
+
+void settingsCycleLcdContrast(void) {
+  settingsInit();
+  s_settings.lcdContrast = (LcdContrastSetting)((s_settings.lcdContrast + 1U) % LCD_CONTRAST_COUNT);
+  settingsSave();
+}
+
+uint8_t settingsGetLcdContrastValue(void) {
+  // ST7036 6-bit contrast (C5..C0). Default (level 3) reproduces the original
+  // fixed init value (0x2F). Range narrowed to the readable band for this
+  // panel: level 1 (0x28) is the lightest still-legible step and level 5
+  // (0x36) the darkest before it washes out, with even steps in between.
+  switch (settingsGetLcdContrast()) {
+    case LCD_CONTRAST_1: return 0x28;
+    case LCD_CONTRAST_2: return 0x2C;
+    case LCD_CONTRAST_3: return 0x2F;
+    case LCD_CONTRAST_4: return 0x33;
+    case LCD_CONTRAST_5: return 0x36;
+    default: return 0x2F;
   }
 }

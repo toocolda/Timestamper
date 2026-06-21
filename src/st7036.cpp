@@ -92,3 +92,15 @@ void ST7036::print(const __FlashStringHelper* str) {
         c = pgm_read_byte(p++);
     }
 }
+
+void ST7036::setContrast(uint8_t value) {
+    // 6-bit contrast (C5..C0). Programmed via the extended instruction set:
+    // Contrast Set carries C3..C0; Power/ICON/Contrast carries C5..C4 (Bon=1).
+    if (value > 0x3F) value = 0x3F;
+    busAcquire();
+    cmd(LCD_CMD_FUNC_SET_EXT);  // IS=1: extended instruction set
+    cmd(LCD_CMD_CONTRAST_SET_BASE | (value & 0x0F));
+    cmd(LCD_CMD_POWER_CONTRAST_BASE | ((value >> 4) & 0x03));
+    cmd(LCD_CMD_FUNC_SET);      // IS=0: back to normal instruction set
+    busRelease();
+}

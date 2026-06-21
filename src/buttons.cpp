@@ -4,8 +4,9 @@
 #include "time/crystal_time.h"
 
 // ===== Button Configuration =====
-#define LONG_PRESS_TIME_MS 500  // Time to consider a press as "long"
-#define DEBOUNCE_TIME_MS 20     // Debounce time
+#define LONG_PRESS_TIME_MS 500      // Time to consider a press as "long"
+#define TOP_LONG_PRESS_TIME_MS 800  // Top button (timestamp capture) needs a longer, deliberate hold
+#define DEBOUNCE_TIME_MS 20         // Debounce time
 
 // ===== Button Pin Definitions =====
 #define BTN_ENC PIN_ENC_BTN
@@ -57,7 +58,10 @@ ButtonEvent_t handleButtons() {
   
   for (int i = 0; i < 4; i++) {
     bool isPressed = isButtonPressed(i);
-    
+
+    // Top button (index 3) requires a longer hold so timestamp capture is deliberate.
+    uint32_t longPressMs = (i == 3) ? TOP_LONG_PRESS_TIME_MS : LONG_PRESS_TIME_MS;
+
     // Transition from not pressed to pressed
     if (isPressed && !buttons[i].lastPressed) {
       buttons[i].lastPressed = true;
@@ -70,7 +74,7 @@ ButtonEvent_t handleButtons() {
     if (isPressed && buttons[i].lastPressed) {
       // Check for long press if not already reported
       if (!buttons[i].longPressReported && 
-          (nowMs - buttons[i].pressStartTime) >= LONG_PRESS_TIME_MS) {
+          (nowMs - buttons[i].pressStartTime) >= longPressMs) {
         buttons[i].longPressReported = true;
         lastDebounceTime = nowMs;
         
@@ -92,7 +96,7 @@ ButtonEvent_t handleButtons() {
       uint32_t pressDuration = nowMs - buttons[i].pressStartTime;
       
       // If it was a short press (released before long press time)
-      if (!buttons[i].longPressReported && pressDuration < LONG_PRESS_TIME_MS) {
+      if (!buttons[i].longPressReported && pressDuration < longPressMs) {
         // Return short press event
         switch (i) {
           case 0: return BUTTON_ENC_SHORT;

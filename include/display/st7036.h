@@ -14,6 +14,7 @@ public:
   void setCursor(uint8_t col, uint8_t row);
   void print(const char* str);
   void print(const __FlashStringHelper* str);
+  void setContrast(uint8_t value);
   void busAcquire();
   void busRelease();
 

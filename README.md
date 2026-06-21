@@ -139,6 +139,7 @@ Current UTC settings:
 - Buzzer: `OFF`, `ALRMS ONLY`, `ALL`
 - Timer preset: `00:00:00`, `00:30:00`, `01:00:00`
 - GPS auto sync: `OFF`, `12H`, `24H`, `WEEK`
+- LCD contrast: `1`..`5` (applied live)
 - Firmware version display
 - Build date display
 

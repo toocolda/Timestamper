@@ -32,6 +32,15 @@ enum GpsAutoSyncSetting : uint8_t {
   GPS_AUTO_SYNC_COUNT
 };
 
+enum LcdContrastSetting : uint8_t {
+  LCD_CONTRAST_1 = 0,
+  LCD_CONTRAST_2,
+  LCD_CONTRAST_3,
+  LCD_CONTRAST_4,
+  LCD_CONTRAST_5,
+  LCD_CONTRAST_COUNT
+};
+
 void settingsInit(void);
 
 BacklightAutoOffSetting settingsGetBacklightAutoOff(void);
@@ -49,3 +58,7 @@ uint32_t settingsGetTimerPresetSeconds(void);
 GpsAutoSyncSetting settingsGetGpsAutoSync(void);
 void settingsCycleGpsAutoSync(void);
 uint32_t settingsGetGpsAutoSyncIntervalMs(void);
+
+LcdContrastSetting settingsGetLcdContrast(void);
+void settingsCycleLcdContrast(void);
+uint8_t settingsGetLcdContrastValue(void);
