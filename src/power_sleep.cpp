@@ -5,6 +5,7 @@
 
 #include "hardware/power_sleep.h"
 #include "hardware/gps_service.h"
+#include "hardware/backlight.h"
 #include "core/config.h"
 #include "core/modes.h"
 #include "time/crystal_time.h"
@@ -130,8 +131,13 @@ static bool deskSleepShouldRun() {
   bool noStopwatchActivity = !stopwatchAnyRunning();
   bool gpsOff = !gpsPowerIsOn();
 
+  // Blue backlight fading needs 10ms updates + a running Timer3. Deep sleep
+  // gates Timer3 off and only wakes at 1Hz, which would strand the PWM pin and
+  // stretch the fade into a visible per-second blink. Stay awake until settled.
+  bool noBacklightFade = !backlightFadeTransitionActive();
+
   // Enter desk sleep only when all low-power conditions are satisfied.
-  return (g_currentMode == MODE_LOCAL_ONLY) && gpsOff && noTimerActivity && noStopwatchActivity && noManualEdit;
+  return (g_currentMode == MODE_LOCAL_ONLY) && gpsOff && noTimerActivity && noStopwatchActivity && noManualEdit && noBacklightFade;
 }
 
 static void deskSleepResetState() {

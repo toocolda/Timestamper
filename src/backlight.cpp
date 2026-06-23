@@ -252,3 +252,12 @@ uint32_t backlightGetManualTimeoutMs(void) {
 bool backlightIsActive() {
   return (s_manualOn || s_blueLevel > 0 || timerAnyAlarmActive() || s_timestampBlinkActive);
 }
+
+// ===== Query if the blue fade is mid-transition =====
+// True while the fade engine still needs frequent (10ms) updates to step the
+// blue level toward its target. Desk-mode deep sleep stops Timer3 and only
+// wakes at 1Hz, which would strand the PWM pin and stretch the fade into a
+// visible per-second blink, so sleep must wait until the fade settles.
+bool backlightFadeTransitionActive() {
+  return (s_blueLevel != s_blueTarget);
+}

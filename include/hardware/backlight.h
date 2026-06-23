@@ -45,3 +45,11 @@ uint32_t backlightGetManualTimeoutMs(void);
  * @return true if timer alarm or timestamp blink is active
  */
 bool backlightIsActive(void);
+
+/**
+ * Check if the blue fade is mid-transition (level != target).
+ * Used to inhibit desk-mode deep sleep so the ~240ms fade can complete
+ * smoothly instead of being stretched into a per-second blink.
+ * @return true while the blue fade still needs fast (10ms) updates
+ */
+bool backlightFadeTransitionActive(void);
