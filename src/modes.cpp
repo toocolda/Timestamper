@@ -721,7 +721,7 @@ static void utcSettingsToggleSelected() {
       lcd.setCursor(0, 1);
       lcd.print("                    ");
       digitalWrite(PIN_POWER_ENABLE, LOW);
-      while (1) {}
+      while (true) { /* wait for main power rail to collapse */ }
       break;
     default:
       break;
