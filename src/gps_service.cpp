@@ -283,7 +283,6 @@ static void gpsSetPower(bool on) {
   }
 
   digitalWrite(PIN_GPS_POWER, on ? LOW : HIGH);
-  digitalWrite(PIN_GPS_ENABLE, on ? HIGH : LOW);
   gpsSetUartEnabled(on);
 
   s_gpsPowerPinsInitialized = true;
@@ -483,7 +482,6 @@ void gpsServiceInit(void) {
 
   // GPS power controls are managed dynamically by mode/sync policy.
   pinMode(PIN_GPS_POWER, OUTPUT);
-  pinMode(PIN_GPS_ENABLE, OUTPUT);
 #if GPS_PPS_DISCIPLINE_ENABLED
   pinMode(PIN_GPS_PPS, INPUT);
   attachInterrupt(digitalPinToInterrupt(PIN_GPS_PPS), gpsPpsIsr, RISING);

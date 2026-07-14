@@ -31,11 +31,7 @@ static ButtonState buttons[4] = {
 
 static bool isButtonPressed(int index) {
   bool levelHigh = (digitalRead(buttons[index].pin) == HIGH);
-  if (index == 3) {
-    // Top button is NC on v0.2: pressed state is electrically inverted.
-    return levelHigh;
-  }
-  // Other buttons are NO with INPUT_PULLUP.
+  // All buttons are NO with INPUT_PULLUP (v0.3 PCB).
   return !levelHigh;
 }
 

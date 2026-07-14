@@ -59,7 +59,7 @@
 #define PIN_BACKLIGHT_RED PIN_PB2
 #define PIN_BACKLIGHT_GREEN PIN_PB1
 #define PIN_BACKLIGHT_BLUE PIN_PB0
-#define PIN_GPS_ENABLE PIN_PC2   // GPS module EN pin
+#define PIN_POWER_ENABLE PIN_PC2  // N-MOSFET latch: HIGH keeps main power on
 #define PIN_GPS_PPS PIN_PD2
 
 // ===== ADC Pin Assignments =====
@@ -88,7 +88,6 @@
 
 // ===== GPS Boot Control =====
 #define GPS_POWER_DEFAULT_ON 1
-#define GPS_ENABLE_DEFAULT_ON 1
 
 // ===== Active-Mode Power Gating =====
 // Gate otherwise-idle peripherals during normal operation to cut active-mode
