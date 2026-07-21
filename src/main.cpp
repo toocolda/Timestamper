@@ -65,6 +65,11 @@ void handleEncoder() {
 
 // ===== Setup =====
 void setup() {
+  // Assert power-enable latch immediately so the N-MOSFET keeps the main
+  // power rail on for the rest of boot. Must be the first action in setup().
+  pinMode(PIN_POWER_ENABLE, OUTPUT);
+  digitalWrite(PIN_POWER_ENABLE, HIGH);
+
   settingsInit();
 
   // Early low-power hardware gating (WDT off, comparator off, SPI gate, pull-ups).

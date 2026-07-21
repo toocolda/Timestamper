@@ -595,6 +595,7 @@ enum UtcSettingsItem : uint8_t {
   UTC_SETTINGS_CONTRAST,
   UTC_SETTINGS_FIRMWARE,
   UTC_SETTINGS_BUILD_DATE,
+  UTC_SETTINGS_POWER_OFF,
   UTC_SETTINGS_COUNT
 };
 
@@ -682,6 +683,10 @@ static void utcSettingsDescribe(uint8_t item, const char** label, const char** v
       *label = "Build Date";
       *value = kFirmwareDate;
       break;
+    case UTC_SETTINGS_POWER_OFF:
+      *label = "Power Off";
+      *value = "[SELECT]";
+      break;
     default:
       *label = "";
       *value = nullptr;
@@ -709,6 +714,14 @@ static void utcSettingsToggleSelected() {
     case UTC_SETTINGS_CONTRAST:
       settingsCycleLcdContrast();
       lcd.setContrast(settingsGetLcdContrastValue());
+      break;
+    case UTC_SETTINGS_POWER_OFF:
+      lcd.setCursor(0, 0);
+      lcd.print("  Powering off...   ");
+      lcd.setCursor(0, 1);
+      lcd.print("                    ");
+      digitalWrite(PIN_POWER_ENABLE, LOW);
+      while (true) { /* wait for main power rail to collapse */ }
       break;
     default:
       break;
