@@ -101,8 +101,8 @@ static BatteryLevel_t s_batteryLevel = BATTERY_LEVEL_NONE;
 static BatteryLevel_t batteryLevelFromMv(uint16_t batteryMv, BatteryLevel_t prev) {
   // USB-only power (no battery pack) leaves the divider input near 0 mV.
   // Use hysteresis so intermittent noise does not flap between NO and LOW.
-  static const uint16_t kNoBatteryEnterMv = 600U;
-  static const uint16_t kNoBatteryExitMv = 900U;
+  static const uint16_t kNoBatteryEnterMv = 750U;
+  static const uint16_t kNoBatteryExitMv = 1050U;
   if (prev == BATTERY_LEVEL_NONE) {
     if (batteryMv < kNoBatteryExitMv) return BATTERY_LEVEL_NONE;
   } else {

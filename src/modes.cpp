@@ -25,8 +25,8 @@
 // - Owns button event routing for mode-specific behavior
 
 // Firmware version
-static const char kFirmwareVersion[] = "v0.04";
-static const char kFirmwareDate[] = "20260622";
+static const char kFirmwareVersion[] = "v0.05";
+static const char kFirmwareDate[] = "20260722";
 
 // Forward declarations from main.cpp
 extern ST7036 lcd;
