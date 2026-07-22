@@ -70,6 +70,7 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
   static const uint16_t kAlarmToneAHz = 1047;
   static const uint16_t kAlarmToneBHz = 784;
   static const uint8_t kAlarmDutyPercent = 13;
+  static bool s_alarmPatternActive = false;
 
   if (!alarmWanted) {
     if (g_alarmToneOn) {
@@ -78,6 +79,20 @@ static void timerAlarmPatternUpdate(bool alarmWanted) {
     }
     g_alarmStep = 0;
     g_alarmLastStepMs = crystalTimeGetMillis();
+    s_alarmPatternActive = false;
+    return;
+  }
+
+  // On alarm start: kick off the first tone immediately and arm the step timer
+  // so the first Tone A plays for its full duration before advancing.
+  if (!s_alarmPatternActive) {
+    s_alarmPatternActive = true;
+    g_alarmStep = 0;
+    g_alarmLastStepMs = crystalTimeGetMillis();
+    if (buzzerAllowsAlarm()) {
+      buzzerStartWithDuty(kAlarmToneAHz, kAlarmDutyPercent);
+      g_alarmToneOn = true;
+    }
     return;
   }
 
