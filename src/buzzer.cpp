@@ -2,6 +2,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include "hardware/buzzer.h"
+#include "core/config.h"
 
 static uint8_t s_buzzerPin = 255;
 static const uint8_t kBuzzerDutyPercent = 18;
