@@ -5,32 +5,11 @@
 #include "core/config.h"
 
 // ===== Battery Configuration =====
-// Voltage divider: 100K (positive) + 100K (to GND) = 200K total
-// V_out = V_in * (100K / 200K) = V_in * 0.5
+// Voltage divider: 1M (positive) + 1M (to GND) = 2M total
+// V_out = V_in * (1M / 2M) = V_in * 0.5
 // Battery state changes slowly enough that 15 s updates are effectively
 // real-time while reducing repeated ADC/reference wakeups in UTC mode.
 static const uint16_t kBatteryUpdatePeriodMs = 15000;
-
-struct BatteryCurvePoint {
-  uint16_t mv;
-  uint8_t pct;
-};
-
-// 3xAAA NiMH pack (series) discharge approximation under light/moderate load.
-// NiMH has a flatter plateau than alkaline, then a steeper knee near depletion.
-static const BatteryCurvePoint kBatteryCurve[] = {
-  {3000, 0},
-  {3300, 3},
-  {3450, 10},
-  {3550, 24},
-  {3650, 42},
-  {3750, 62},
-  {3850, 80},
-  {3950, 91},
-  {4050, 97},
-  {4150, 99},
-  {4500, 99}
-};
 
 #if BATTERY_MEASURE_VIA_VCC
 static uint16_t batteryReadVccMv() {
@@ -63,46 +42,16 @@ static uint16_t batteryReadVccMv() {
 }
 #endif
 
-static uint8_t batteryPercentFromMv(uint16_t batteryMv) {
-  const uint8_t pointCount = (uint8_t)(sizeof(kBatteryCurve) / sizeof(kBatteryCurve[0]));
-  if (batteryMv <= kBatteryCurve[0].mv) {
-    return kBatteryCurve[0].pct;
-  }
-  if (batteryMv >= kBatteryCurve[pointCount - 1].mv) {
-    return kBatteryCurve[pointCount - 1].pct;
-  }
-
-  for (uint8_t i = 1; i < pointCount; i++) {
-    uint16_t mvHi = kBatteryCurve[i].mv;
-    if (batteryMv > mvHi) continue;
-
-    uint16_t mvLo = kBatteryCurve[i - 1].mv;
-    uint8_t pctLo = kBatteryCurve[i - 1].pct;
-    uint8_t pctHi = kBatteryCurve[i].pct;
-
-    uint16_t spanMv = mvHi - mvLo;
-    uint16_t posMv = batteryMv - mvLo;
-    uint16_t spanPct = (uint16_t)pctHi - (uint16_t)pctLo;
-    uint16_t interp = (uint16_t)((((uint32_t)posMv * (uint32_t)spanPct) + (spanMv / 2U)) / spanMv);
-    uint8_t pct = (uint8_t)((uint16_t)pctLo + interp);
-    if (pct > 99U) pct = 99U;
-    return pct;
-  }
-
-  return 0;
-}
-
 // ===== Module State =====
 static uint8_t s_batteryAdcPin = 0;
 static uint32_t s_lastBatterySampleMs = 0;
-static uint8_t s_batteryPercent = 0;
 static BatteryLevel_t s_batteryLevel = BATTERY_LEVEL_NONE;
 
 static BatteryLevel_t batteryLevelFromMv(uint16_t batteryMv, BatteryLevel_t prev) {
   // USB-only power (no battery pack) leaves the divider input near 0 mV.
   // Use hysteresis so intermittent noise does not flap between NO and LOW.
-  static const uint16_t kNoBatteryEnterMv = 750U;
-  static const uint16_t kNoBatteryExitMv = 1050U;
+  static const uint16_t kNoBatteryEnterMv = 1500U;
+  static const uint16_t kNoBatteryExitMv = 1650U;
   if (prev == BATTERY_LEVEL_NONE) {
     if (batteryMv < kNoBatteryExitMv) return BATTERY_LEVEL_NONE;
   } else {
@@ -141,7 +90,7 @@ void batteryInit(uint8_t adcPin) {
   batteryUpdate();  // Initial read
 }
 
-// ===== Update battery percentage (internally throttled to 1 second) =====
+// ===== Update battery state (internally throttled to 1 second) =====
 void batteryUpdate() {
   if (s_batteryAdcPin == 0) return;  // Not initialized
 
@@ -186,18 +135,11 @@ void batteryUpdate() {
   uint16_t sensedMv = (uint16_t)(((uint32_t)adcValue * (uint32_t)BATTERY_ADC_REF_MV + 511UL) / 1023UL);
 
   // Correct for voltage divider to get actual battery voltage (in mV)
-  // V_in = V_out * 2 for a 100K/100K divider.
+  // V_in = V_out * 2 for a 1M/1M divider.
   batteryMv = (uint16_t)((uint32_t)sensedMv * 2UL);
 #endif
-  
-  // Convert battery voltage using a nonlinear 3xAAA curve and clamp to 0..99 for 2-digit UI.
-  s_batteryPercent = batteryPercentFromMv(batteryMv);
-  s_batteryLevel = batteryLevelFromMv(batteryMv, s_batteryLevel);
-}
 
-// ===== Get current battery percentage =====
-uint8_t batteryGetPercentage() {
-  return s_batteryPercent;
+  s_batteryLevel = batteryLevelFromMv(batteryMv, s_batteryLevel);
 }
 
 BatteryLevel_t batteryGetLevel() {

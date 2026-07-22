@@ -289,7 +289,7 @@ GPS freshness policy:
 ## Known Practical Notes
 
 - Timestamp capture uses the current maintained clock value, not raw GPS parser timestamp
-- Battery percentage display is primarily surfaced in UTC Only mode
+- Battery status is surfaced as a coarse level in UTC Only mode
 - GPS PPS discipline is currently disabled by default in config
 - Settings are stored in EEPROM and persist across power cycles
 
